@@ -418,6 +418,7 @@ def run_dungeon_bot():
         except Exception:
             pass
         browser.close()
-
-if __name__ == "__main__":
+def main():
     run_dungeon_bot()
+if __name__ == "__main__":
+     main()
