@@ -114,7 +114,6 @@ def click_battle(page):
     battle_text = page.get_by_text("戰", exact=True).last
     battle_text.wait_for(state="visible", timeout=10000)
 
-    # Prefer the real button containing the kanji rather than the inner div.
     battle_btn = battle_text.locator("xpath=ancestor::button[1]")
     if battle_btn.count() > 0:
         try:
@@ -153,32 +152,43 @@ def wait_and_click_result(page, run_count, attempt):
 
 
 def find_retry_button(page):
-    # The game displays the next-run control as something like:
-    # 'ЕЩЁ РАЗ · 氣8'. Match by the stable Russian part and ignore the energy count.
+    # IMPORTANT: do not search for the Russian text 'ЕЩЁ РАЗ'.
+    # The stable marker for the repeat control is the kanji 氣.
+    # The number after it (8, 7, 6, ...) is deliberately ignored.
     candidates = [
-        page.get_by_text("ЕЩЁ РАЗ", exact=False).last,
-        page.locator("button").filter(has_text="ЕЩЁ РАЗ").last,
+        page.get_by_text("氣", exact=True).last,
+        page.locator("button").filter(has_text="氣").last,
     ]
+
     for candidate in candidates:
         try:
-            candidate.wait_for(state="visible", timeout=3000)
+            candidate.wait_for(state="visible", timeout=5000)
             return candidate
         except Exception:
             continue
+
     return None
 
 
 def click_retry(page, run_count, attempt):
-    retry_button = find_retry_button(page)
-    if retry_button is None:
+    retry_marker = find_retry_button(page)
+    if retry_marker is None:
         return False
 
-    try:
-        retry_button.click(timeout=10000)
-    except Exception:
-        retry_button.click(timeout=10000, force=True)
+    # Prefer clicking the actual button that contains 氣.
+    retry_button = retry_marker.locator("xpath=ancestor::button[1]")
+    if retry_button.count() > 0:
+        try:
+            retry_button.click(timeout=10000)
+        except Exception:
+            retry_button.click(timeout=10000, force=True)
+    else:
+        try:
+            retry_marker.click(timeout=10000)
+        except Exception:
+            retry_marker.click(timeout=10000, force=True)
 
-    print(f"🔁 Нажато 'ЕЩЁ РАЗ' — следующая попытка №{attempt}.")
+    print(f"🔁 Найден и нажат именно иероглиф 氣 — следующая попытка №{attempt}.")
     human_sleep(2, 3)
     return True
 
@@ -296,17 +306,16 @@ def run_dungeon_bot(proxy_url=None):
                 print("▶️ Нажато 'ПРОЙТИ СНОВА'.")
                 human_sleep(2, 3)
 
-                # First battle.
                 click_battle(page)
                 print("⚔️ Нажата кнопка боя (戰)!")
                 wait_and_click_result(page, run_count, 1)
-                safe_screenshot(page, f"cycle_{run_count}_attempt_1_result.png", f"🏆 Результат — попытка №1")
+                safe_screenshot(page, f"cycle_{run_count}_attempt_1_result.png", "🏆 Результат — попытка №1")
 
-                # After 'К результатам', the game offers 'ЕЩЁ РАЗ · 氣8'.
-                # Keep alternating: К результатам -> ЕЩЁ РАЗ -> battle -> К результатам...
+                # После 'К результатам' ищем ТОЛЬКО 氣.
+                # Затем снова 戰 -> К результатам -> 氣 -> ...
                 for attempt in range(2, max_attempts + 1):
                     if not click_retry(page, run_count, attempt):
-                        print("ℹ️ Кнопка 'ЕЩЁ РАЗ' больше не доступна — энергия закончилась или этап завершён.")
+                        print("ℹ️ Иероглиф 氣 больше не найден — энергия закончилась или этап завершён.")
                         break
 
                     click_battle(page)
@@ -318,7 +327,6 @@ def run_dungeon_bot(proxy_url=None):
                         f"🏆 Результат — попытка №{attempt}",
                     )
 
-                # Return to the map after all available attempts in this dungeon.
                 return_button = page.locator('button[data-sentry-source-file="pve-result-overlay.tsx"]').last
                 try:
                     return_button.wait_for(state="visible", timeout=10000)
@@ -328,7 +336,6 @@ def run_dungeon_bot(proxy_url=None):
                         return_button.click(timeout=10000, force=True)
                     print("✅ Возвращаемся на карту.")
                 except Exception:
-                    # Some versions of the UI return to the map automatically.
                     if "murim-cards" in page.url:
                         print("ℹ️ Интерфейс уже вернулся на карту.")
                     else:
