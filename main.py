@@ -52,6 +52,13 @@ def human_sleep(min_sec=2, max_sec=4):
     time.sleep(random.uniform(min_sec, max_sec))
 
 
+def type_text_sequentially(field, text: str, min_delay=0.07, max_delay=0.16):
+    """Type one character at a time with a small variable pause between keystrokes."""
+    for char in text:
+        field.press_sequentially(char)
+        time.sleep(random.uniform(min_delay, max_delay))
+
+
 def get_file_path(filename: str) -> str:
     return str(Path(__file__).resolve().parent / filename)
 
@@ -229,14 +236,14 @@ def ensure_authenticated(page):
             print("ℹ️ Форма входа не найдена.")
             return False
 
-        print("✍️ Ввожу логин...")
+        print("✍️ Ввожу логин посимвольно...")
         email_field.click()
-        email_field.press_sequentially(email_val, delay=random.randint(60, 110))
+        type_text_sequentially(email_field, email_val, 0.08, 0.18)
         human_sleep(0.8, 1.5)
 
-        print("✍️ Ввожу пароль...")
+        print("✍️ Ввожу пароль посимвольно...")
         pass_field.click()
-        pass_field.press_sequentially(pass_val, delay=random.randint(60, 110))
+        type_text_sequentially(pass_field, pass_val, 0.08, 0.18)
         human_sleep(1, 2)
 
         submit_btn = page.locator(
