@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import time
@@ -27,7 +28,6 @@ def send_telegram_message(message: str) -> None:
 
 
 def send_telegram_photo(photo_path: str, caption: str = "") -> None:
-    """Send a debug screenshot to Telegram when screenshot logs are enabled."""
     if os.getenv("SCREENSHOT_LOGS", "true").lower() != "true":
         return
 
@@ -52,8 +52,8 @@ def human_sleep(min_sec=2, max_sec=4):
     time.sleep(random.uniform(min_sec, max_sec))
 
 
-def type_text_sequentially(field, text: str, min_delay=0.07, max_delay=0.16):
-    """Type one character at a time with a small variable pause between keystrokes."""
+def type_text_sequentially(field, text: str, min_delay=0.08, max_delay=0.18):
+    """Вводит текст посимвольно."""
     for char in text:
         field.press_sequentially(char)
         time.sleep(random.uniform(min_delay, max_delay))
@@ -64,7 +64,6 @@ def get_file_path(filename: str) -> str:
 
 
 def parse_proxy_url(proxy_url: str):
-    """Convert http://user:pass@host:port to Playwright proxy settings."""
     parsed = urlparse(proxy_url)
     if not parsed.hostname or not parsed.port:
         raise ValueError("Invalid proxy URL")
@@ -89,6 +88,7 @@ def parse_netscape_cookies(file_path: str):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+
             parts = line.split("\t")
             if len(parts) < 7:
                 continue
@@ -127,15 +127,48 @@ def parse_netscape_cookies(file_path: str):
     return cookies
 
 
+def load_cookies(file_path: str):
+    """Поддерживает Playwright/JSON cookies и старый Netscape cookies.txt."""
+    if not os.path.exists(file_path):
+        return []
+
+    if file_path.lower().endswith(".json"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("cookies"), list):
+                data = data["cookies"]
+            if isinstance(data, list):
+                valid = []
+                for cookie in data:
+                    if isinstance(cookie, dict) and cookie.get("name") and "value" in cookie:
+                        valid.append(cookie)
+                return valid
+        except Exception as exc:
+            print(f"⚠️ Не удалось прочитать JSON cookies: {exc}")
+            return []
+
+    return parse_netscape_cookies(file_path)
+
+
+def save_cookies_json(context, file_path: str):
+    """Сохраняет актуальную сессию Playwright для следующего запуска."""
+    try:
+        cookies = context.cookies()
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, ensure_ascii=False, indent=2)
+        print(f"🍪 Актуальные cookies сохранены: {file_path}")
+        return True
+    except Exception as exc:
+        print(f"⚠️ Не удалось сохранить cookies: {exc}")
+        return False
+
+
 def safe_screenshot(page, filename="error_screenshot.png", caption="📸 Screenshot"):
-    """Save a screenshot locally and optionally send it to Telegram."""
     path = get_file_path(filename)
     try:
-        page.screenshot(
-            path=path,
-            timeout=5000,
-            animations="disabled",
-        )
+        page.screenshot(path=path, timeout=5000, animations="disabled")
         print(f"📸 Скриншот сохранён: {path}")
         send_telegram_photo(path, caption)
         return path
@@ -145,7 +178,6 @@ def safe_screenshot(page, filename="error_screenshot.png", caption="📸 Screens
 
 
 def setup_browser(p, proxy_url=None):
-    """Create a Playwright browser suitable for an Apify Actor."""
     browser_args = [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -190,16 +222,56 @@ def setup_browser(p, proxy_url=None):
     return browser, context, page
 
 
-def ensure_authenticated(page):
-    print("🔍 Проверка авторизации...")
-    human_sleep(2, 3)
+def has_login_ui(page):
+    """Проверяет именно наличие меню/кнопки входа, а не случайный текст на странице."""
+    selectors = [
+        'header button:has-text("Войти")',
+        'header a:has-text("Войти")',
+        'button:has-text("Войти")',
+        'a:has-text("Войти")',
+    ]
+    for selector in selectors:
+        try:
+            if page.locator(selector).first.is_visible(timeout=800):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def is_authenticated(page):
+    """Определяет, приняла ли страница текущую сессию."""
+    if has_login_ui(page):
+        return False
 
     try:
-        if page.locator("span.font-kanji", has_text="寺").count() > 0:
-            print("✅ Уже авторизованы! Иероглиф катакомб найден.")
+        if page.locator("span.font-kanji", has_text="寺").first.is_visible(timeout=1500):
             return True
     except Exception:
         pass
+
+    # Дополнительный вариант: текст 寺 может быть в другом DOM-элементе.
+    try:
+        if page.get_by_text("寺", exact=True).first.is_visible(timeout=1500):
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def ensure_authenticated(page, context):
+    print("🔍 Проверка авторизации...")
+    human_sleep(2, 3)
+
+    if is_authenticated(page):
+        print("✅ Сессия уже авторизована.")
+        return True
+
+    if has_login_ui(page):
+        print("🔑 Cookies не авторизовали страницу — открываю обычную форму входа.")
+    else:
+        print("ℹ️ Авторизация по cookies не подтверждена — проверяю форму входа.")
 
     email_val = os.getenv("REMANGA_EMAIL")
     pass_val = os.getenv("REMANGA_PASSWORD")
@@ -210,11 +282,14 @@ def ensure_authenticated(page):
         return False
 
     try:
-        email_field = page.locator(
+        email_selector = (
             'input[type="email"], input[name="username"], input[name="email"], '
             'input[placeholder*="Почта"], input[placeholder*="Email"], input[type="text"]'
-        ).first
-        pass_field = page.locator('input[type="password"]').first
+        )
+        pass_selector = 'input[type="password"]'
+
+        email_field = page.locator(email_selector).first
+        pass_field = page.locator(pass_selector).first
 
         if not (email_field.is_visible(timeout=2000) and pass_field.is_visible(timeout=2000)):
             print("🔑 Ищу кнопку 'Войти'...")
@@ -226,24 +301,25 @@ def ensure_authenticated(page):
                 open_btns.first.click()
                 human_sleep(2, 3)
 
-        email_field = page.locator(
-            'input[type="email"], input[name="username"], input[name="email"], '
-            'input[placeholder*="Почта"], input[placeholder*="Email"], input[type="text"]'
-        ).first
-        pass_field = page.locator('input[type="password"]').first
+        email_field = page.locator(email_selector).first
+        pass_field = page.locator(pass_selector).first
 
         if not (email_field.is_visible(timeout=5000) and pass_field.is_visible(timeout=5000)):
             print("ℹ️ Форма входа не найдена.")
+            safe_screenshot(page, "auth_form_not_found.png", "🔑 Форма входа не найдена")
             return False
 
+        # Не используем fill(): сайт у пользователя ломается при мгновенной подстановке.
         print("✍️ Ввожу логин посимвольно...")
         email_field.click()
-        type_text_sequentially(email_field, email_val, 0.08, 0.18)
+        email_field.press("Control+A")
+        type_text_sequentially(email_field, email_val)
         human_sleep(0.8, 1.5)
 
         print("✍️ Ввожу пароль посимвольно...")
         pass_field.click()
-        type_text_sequentially(pass_field, pass_val, 0.08, 0.18)
+        pass_field.press("Control+A")
+        type_text_sequentially(pass_field, pass_val)
         human_sleep(1, 2)
 
         submit_btn = page.locator(
@@ -253,11 +329,41 @@ def ensure_authenticated(page):
         submit_btn.click()
 
         print("⏳ Ожидание авторизации...")
-        human_sleep(6, 8)
-        safe_screenshot(page, "after_login.png", "🔑 После авторизации")
-        page.goto(TARGET_URL, timeout=60000, wait_until="commit")
-        human_sleep(4, 6)
-        return True
+        human_sleep(5, 7)
+
+        # Если сервер показывает дополнительную проверку, не пытаемся её обходить.
+        verification_texts = [
+            "Проверка",
+            "Подтвердите, что вы не робот",
+            "Я не робот",
+            "captcha",
+            "CAPTCHA",
+        ]
+        for text in verification_texts:
+            try:
+                if page.get_by_text(text, exact=False).first.is_visible(timeout=500):
+                    print("⚠️ Обнаружена дополнительная проверка после входа.")
+                    safe_screenshot(page, "auth_verification.png", "⚠️ Дополнительная проверка Remanga")
+                    send_telegram_message(
+                        "⚠️ Remanga запросил дополнительную проверку после входа. "
+                        "Автоматически обходить её не будем."
+                    )
+                    return False
+            except Exception:
+                pass
+
+        if is_authenticated(page):
+            print("✅ Авторизация подтверждена.")
+            cookies_output = os.getenv(
+                "REMANGA_COOKIES_JSON",
+                get_file_path("cookies.json"),
+            )
+            save_cookies_json(context, cookies_output)
+            return True
+
+        safe_screenshot(page, "after_login.png", "🔑 Состояние после авторизации")
+        print("⚠️ После входа авторизация не подтверждена.")
+        return False
 
     except Exception as exc:
         print(f"⚠️ Ошибка авторизации: {exc}")
@@ -276,11 +382,27 @@ def run_dungeon_bot(proxy_url=None):
         browser, context, page = setup_browser(p, proxy_url)
 
         try:
-            cookies_path = os.getenv("REMANGA_COOKIES_FILE", get_file_path("cookies.txt"))
-            netscape_cookies = parse_netscape_cookies(cookies_path)
-            if netscape_cookies:
-                context.add_cookies(netscape_cookies)
-                print(f"🍪 Загружено cookies: {len(netscape_cookies)}")
+            # Сначала пробуем свежий JSON Playwright cookies, затем старый cookies.txt.
+            json_cookie_path = os.getenv(
+                "REMANGA_COOKIES_JSON",
+                get_file_path("cookies.json"),
+            )
+            netscape_cookie_path = os.getenv(
+                "REMANGA_COOKIES_FILE",
+                get_file_path("cookies.txt"),
+            )
+
+            cookies = load_cookies(json_cookie_path)
+            cookie_source = json_cookie_path
+            if not cookies:
+                cookies = load_cookies(netscape_cookie_path)
+                cookie_source = netscape_cookie_path
+
+            if cookies:
+                context.add_cookies(cookies)
+                print(f"🍪 Загружено cookies: {len(cookies)} ({cookie_source})")
+            else:
+                print("🍪 Cookies не найдены — сразу будет использована форма входа.")
 
             print(f"🔗 Переход на {TARGET_URL}...")
             resp = page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
@@ -291,7 +413,7 @@ def run_dungeon_bot(proxy_url=None):
             if status in (403, 502, 503):
                 message = (
                     f"❌ Remanga вернул HTTP {status}. "
-                    "Проверь СНГ/подходящий прокси в Apify."
+                    "Проверь прокси в Apify."
                 )
                 print(message)
                 send_telegram_message(message)
@@ -302,8 +424,22 @@ def run_dungeon_bot(proxy_url=None):
             human_sleep(5, 7)
             safe_screenshot(page, "page_loaded.png", "🌐 Страница загружена")
 
-            if not ensure_authenticated(page):
-                print("⚠️ Авторизация не подтверждена, продолжаю проверку страницы.")
+            # ВАЖНО: сначала всегда проверяем уже загруженные cookies.
+            if is_authenticated(page):
+                print("🍪✅ Cookies рабочие — вход через логин/пароль не требуется.")
+            else:
+                print("🍪❌ Cookies не дали авторизацию — запускаю старую авторизацию.")
+                if not ensure_authenticated(page, context):
+                    print("❌ Авторизация не подтверждена. Останавливаю Actor, чтобы не ломать сессию.")
+                    return
+
+                # После успешного входа обновляем страницу и ещё раз проверяем сессию.
+                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
+                human_sleep(4, 6)
+                if not is_authenticated(page):
+                    print("❌ После входа сессия не подтверждена.")
+                    safe_screenshot(page, "auth_not_confirmed.png", "❌ Сессия не подтверждена")
+                    return
 
             try:
                 close_btn = page.locator('button[aria-label="Закрыть"]')
