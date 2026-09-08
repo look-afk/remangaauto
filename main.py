@@ -98,21 +98,10 @@ def is_authenticated(page):
         return False
 
 
-def click_text(page, text, timeout=10000, exact=True, force_fallback=True):
-    locator = page.get_by_text(text, exact=exact).last
-    locator.wait_for(state="visible", timeout=timeout)
-    try:
-        locator.click(timeout=timeout)
-    except Exception:
-        if not force_fallback:
-            raise
-        locator.click(timeout=timeout, force=True)
-    return locator
-
-
 def click_battle(page):
+    """Click only the battle control identified by the exact kanji 戰."""
     battle_text = page.get_by_text("戰", exact=True).last
-    battle_text.wait_for(state="visible", timeout=10000)
+    battle_text.wait_for(state="visible", timeout=15000)
 
     battle_btn = battle_text.locator("xpath=ancestor::button[1]")
     if battle_btn.count() > 0:
@@ -127,70 +116,21 @@ def click_battle(page):
             battle_text.click(timeout=10000, force=True)
 
 
-def wait_and_click_result(page, run_count, attempt):
-    print(f"⏳ Жду завершения боя (попытка {attempt})...")
-    result_button = page.get_by_text("К результатам", exact=True).last
+def wait_for_battle_again(page, run_count, attempt):
+    """Wait until the next 戰 is available; absence means mana is insufficient."""
+    print(f"⏳ Жду следующую кнопку 戰 (попытка {attempt})...")
+    battle_text = page.get_by_text("戰", exact=True).last
     try:
-        result_button.wait_for(state="visible", timeout=90000)
+        battle_text.wait_for(state="visible", timeout=30000)
+        return True
     except Exception:
-        print("⚠️ 'К результатам' не появился за 90 секунд.")
-        print(f"🌐 Current URL: {page.url}")
-        print(f"📄 Title: {page.title()}")
+        print("ℹ️ 戰 больше не появился — вероятно, маны больше не хватает.")
         safe_screenshot(
             page,
-            f"cycle_{run_count}_attempt_{attempt}_waiting_result.png",
-            f"🔎 Ожидание результата — цикл №{run_count}, попытка №{attempt}",
+            f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
+            "🔎 Следующий 戰 недоступен",
         )
-        raise
-
-    try:
-        result_button.click(timeout=10000)
-    except Exception:
-        result_button.click(timeout=10000, force=True)
-    print("✅ Нажато 'К результатам'.")
-    human_sleep(2, 3)
-
-
-def find_retry_button(page):
-    # IMPORTANT: do not search for the Russian text 'ЕЩЁ РАЗ'.
-    # The stable marker for the repeat control is the kanji 氣.
-    # The number after it (8, 7, 6, ...) is deliberately ignored.
-    candidates = [
-        page.get_by_text("氣", exact=True).last,
-        page.locator("button").filter(has_text="氣").last,
-    ]
-
-    for candidate in candidates:
-        try:
-            candidate.wait_for(state="visible", timeout=5000)
-            return candidate
-        except Exception:
-            continue
-
-    return None
-
-
-def click_retry(page, run_count, attempt):
-    retry_marker = find_retry_button(page)
-    if retry_marker is None:
         return False
-
-    # Prefer clicking the actual button that contains 氣.
-    retry_button = retry_marker.locator("xpath=ancestor::button[1]")
-    if retry_button.count() > 0:
-        try:
-            retry_button.click(timeout=10000)
-        except Exception:
-            retry_button.click(timeout=10000, force=True)
-    else:
-        try:
-            retry_marker.click(timeout=10000)
-        except Exception:
-            retry_marker.click(timeout=10000, force=True)
-
-    print(f"🔁 Найден и нажат именно иероглиф 氣 — следующая попытка №{attempt}.")
-    human_sleep(2, 3)
-    return True
 
 
 def run_dungeon_bot(proxy_url=None):
@@ -259,7 +199,6 @@ def run_dungeon_bot(proxy_url=None):
 
             run_count = 0
             max_runs = int(os.getenv("MAX_RUNS", "0"))
-            max_attempts = int(os.getenv("MAX_ATTEMPTS", "8"))
 
             while True:
                 run_count += 1
@@ -269,24 +208,15 @@ def run_dungeon_bot(proxy_url=None):
                     print(f"🛑 Достигнут MAX_RUNS={max_runs}.")
                     break
 
+                # 1. Find and click only 寺 on the map.
                 kanji_element = page.locator("span.font-kanji", has_text="寺").first
-                try:
-                    kanji_element.wait_for(state="visible", timeout=20000)
-                except Exception:
-                    print(f"🌐 Current URL: {page.url}")
-                    print(f"📄 Title: {page.title()}")
-                    safe_screenshot(
-                        page,
-                        f"cycle_{run_count}_before_kanji.png",
-                        f"🔎 Не найдено 寺 — цикл №{run_count}",
-                    )
-                    raise
-
+                kanji_element.wait_for(state="visible", timeout=20000)
                 kanji_element.click()
                 print("✅ Кликнул по иероглифу 寺!")
                 safe_screenshot(page, f"cycle_{run_count}_dungeon.png", f"🏯 Катакомбы — цикл №{run_count}")
                 human_sleep(2, 3)
 
+                # 2. Start the dungeon with ПРОЙТИ СНОВА.
                 pass_button = page.get_by_text("ПРОЙТИ СНОВА", exact=True).last
                 pass_button.wait_for(state="visible", timeout=10000)
                 try:
@@ -306,44 +236,37 @@ def run_dungeon_bot(proxy_url=None):
                 print("▶️ Нажато 'ПРОЙТИ СНОВА'.")
                 human_sleep(2, 3)
 
-                click_battle(page)
-                print("⚔️ Нажата кнопка боя (戰)!")
-                wait_and_click_result(page, run_count, 1)
-                safe_screenshot(page, f"cycle_{run_count}_attempt_1_result.png", "🏆 Результат — попытка №1")
+                # 3. Keep clicking 戰 until the game no longer offers it.
+                attempt = 0
+                while True:
+                    attempt += 1
 
-                # После 'К результатам' ищем ТОЛЬКО 氣.
-                # Затем снова 戰 -> К результатам -> 氣 -> ...
-                for attempt in range(2, max_attempts + 1):
-                    if not click_retry(page, run_count, attempt):
-                        print("ℹ️ Иероглиф 氣 больше не найден — энергия закончилась или этап завершён.")
+                    if not wait_for_battle_again(page, run_count, attempt):
+                        print(f"🛑 Маны недостаточно. Завершено боёв: {attempt - 1}.")
                         break
 
                     click_battle(page)
-                    print("⚔️ Нажата кнопка боя (戰)!")
-                    wait_and_click_result(page, run_count, attempt)
-                    safe_screenshot(
-                        page,
-                        f"cycle_{run_count}_attempt_{attempt}_result.png",
-                        f"🏆 Результат — попытка №{attempt}",
-                    )
+                    print(f"⚔️ Нажата кнопка 戰 — бой №{attempt}!")
 
+                    # Wait for the battle/result transition before looking for 戰 again.
+                    page.wait_for_timeout(5000)
+
+                # The current screen is left untouched when 戰 disappears.
+                # Try to return to the map only if the result overlay exposes the map button.
                 return_button = page.locator('button[data-sentry-source-file="pve-result-overlay.tsx"]').last
                 try:
-                    return_button.wait_for(state="visible", timeout=10000)
+                    return_button.wait_for(state="visible", timeout=5000)
                     try:
                         return_button.click(timeout=10000)
                     except Exception:
                         return_button.click(timeout=10000, force=True)
                     print("✅ Возвращаемся на карту.")
+                    human_sleep(4, 6)
                 except Exception:
                     if "murim-cards" in page.url:
                         print("ℹ️ Интерфейс уже вернулся на карту.")
                     else:
-                        print("⚠️ Не удалось найти кнопку возврата на карту.")
-                        safe_screenshot(page, f"cycle_{run_count}_before_return.png")
-                        raise
-
-                human_sleep(4, 6)
+                        print("ℹ️ Кнопка возврата на карту сейчас недоступна.")
 
         except Exception as exc:
             print(f"❌ Ошибка Actor-задачи: {exc}")
