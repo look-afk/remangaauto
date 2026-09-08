@@ -1,0 +1,29 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+.remanga.org	TRUE	/	FALSE	1818321220	__ddg1_	s7pxK96RtRFZ2MoT4Qrv
+.remanga.org	TRUE	/	TRUE	1817997086	authCookiesVersion	2
+.remanga.org	TRUE	/	TRUE	1786785834	re-vk-code-verifier	9057ek0Wsqj2mdx1VQ4A5SXi2rwMFXmJsIhBjA06hHlSoNVWmIlad49WGHEfyWPP
+.remanga.org	TRUE	/	TRUE	1818777810	user	%7B%22id%22%3A3158672%2C%22username%22%3A%22Zavlat-Kamalov%22%2C%22frame%22%3A%7B%7D%2C%22avatar%22%3A%7B%22mid%22%3A%22users%2F3158672%2Favatar_26a4778a.webp%22%2C%22high%22%3A%22users%2F3158672%2Favatar_1d895ea5.webp%22%7D%2C%22email%22%3A%22zavlatkamalov%40gmail.com%22%2C%22is_staff%22%3Afalse%2C%22is_superuser%22%3Afalse%2C%22is_premium%22%3Afalse%2C%22can_buy_premium_type%22%3A2%2C%22participate_in_event%22%3Atrue%7D
+.remanga.org	TRUE	/	TRUE	1818321221	token	vOS0cuzEkQPUtzJsJrpY3zJ7VrUndj
+.remanga.org	TRUE	/	TRUE	1818718022	serverUserV2	%7B%22id%22%3A3158672%2C%22username%22%3A%22Zavlat-Kamalov%22%2C%22frame%22%3A%7B%7D%2C%22avatar%22%3A%7B%22mid%22%3A%22users%2F3158672%2Favatar_26a4778a.webp%22%2C%22high%22%3A%22users%2F3158672%2Favatar_1d895ea5.webp%22%7D%2C%22email%22%3A%22zavlatkamalov%40gmail.com%22%2C%22is_staff%22%3Afalse%2C%22is_superuser%22%3Afalse%2C%22is_premium%22%3Afalse%2C%22can_buy_premium_type%22%3A2%2C%22participate_in_event%22%3Atrue%7D
+.remanga.org	TRUE	/	TRUE	1817997050	serverTokenV2	vOS0cuzEkQPUtzJsJrpY3zJ7VrUndj
+.remanga.org	TRUE	/	TRUE	1818849257	auth:version	3
+.remanga.org	TRUE	/	TRUE	1818849257	auth:token	vOS0cuzEkQPUtzJsJrpY3zJ7VrUndj
+.remanga.org	TRUE	/	TRUE	1820424522	auth:user	%7B%22id%22%3A3158672%2C%22username%22%3A%22Zavlat-Kamalov%22%2C%22frame%22%3A%7B%7D%2C%22avatar%22%3A%7B%22mid%22%3A%22users%2F3158672%2Favatar_26a4778a.webp%22%2C%22high%22%3A%22users%2F3158672%2Favatar_1d895ea5.webp%22%7D%2C%22email%22%3A%22zavlatkamalov%40gmail.com%22%2C%22is_staff%22%3Afalse%2C%22is_superuser%22%3Afalse%2C%22is_premium%22%3Afalse%2C%22can_buy_premium_type%22%3A2%2C%22participate_in_event%22%3Atrue%7D
+.remanga.org	TRUE	/	TRUE	1818849257	auth:server-token	vOS0cuzEkQPUtzJsJrpY3zJ7VrUndj
+.remanga.org	TRUE	/	TRUE	1820357116	auth:server-user	%7B%22id%22%3A3158672%2C%22username%22%3A%22Zavlat-Kamalov%22%2C%22frame%22%3A%7B%7D%2C%22avatar%22%3A%7B%22mid%22%3A%22users%2F3158672%2Favatar_26a4778a.webp%22%2C%22high%22%3A%22users%2F3158672%2Favatar_1d895ea5.webp%22%7D%2C%22email%22%3A%22zavlatkamalov%40gmail.com%22%2C%22is_staff%22%3Afalse%2C%22is_superuser%22%3Afalse%2C%22is_premium%22%3Afalse%2C%22can_buy_premium_type%22%3A2%2C%22participate_in_event%22%3Atrue%7D
+.remanga.org	TRUE	/	TRUE	1818935588	reader:settings	%7B%22novel%22%3A%7B%22fontSize%22%3A19%2C%22lineHeight%22%3A1.7%7D%2C%22manga%22%3A%7B%22imageServer%22%3A2%2C%22readerType%22%3A%22slider%22%2C%22clickableAreaId%22%3A1%2C%22imageFit%22%3A%22width%22%2C%22zoom%22%3Afalse%2C%22clickableAreaZone%22%3A%22page%22%2C%22gapBetweenItems%22%3A0%2C%22notes%22%3Afalse%2C%22pageIndicator%22%3Atrue%7D%2C%22common%22%3A%7B%22hidePageIndex%22%3Afalse%2C%22brightness%22%3A100%2C%22autoLoad%22%3Atrue%2C%22tapToScroll%22%3Afalse%2C%22tapToScrollSize%22%3A50%2C%22autoScrollSize%22%3A8%2C%22containerWidth%22%3A100%2C%22backActionStrategyId%22%3A1%2C%22hotkeys%22%3A%7B%220%22%3A%5B%22D%2FKeyD%22%2C%22ArrowRight%2FArrowRight%22%5D%2C%221%22%3A%5B%22A%2FKeyA%22%2C%22ArrowLeft%2FArrowLeft%22%5D%2C%222%22%3A%5B%5D%2C%223%22%3A%5B%5D%2C%224%22%3A%5B%22E%2FKeyE%22%2C%22ArrowRight%2FCtrl%2BArrowRight%22%5D%2C%225%22%3A%5B%22Q%2FKeyQ%22%2C%22ArrowLeft%2FCtrl%2BArrowLeft%22%5D%2C%226%22%3A%5B%22%2B%2FEqual%22%2C%22%3D%2FEqual%22%5D%2C%227%22%3A%5B%22-%2FMinus%22%2C%22_%2FMinus%22%5D%7D%7D%7D
+.remanga.org	TRUE	/	TRUE	1818935588	reader:menu-hint	true
+.remanga.org	TRUE	/	TRUE	1818935588	reader:promo-modal	%7B%22state%22%3A%7B%22readedChapters%22%3A%5B1774806%2C1784948%2C1788056%2C666244%2C829869%2C829880%2C829873%2C829875%2C829876%2C830219%5D%7D%2C%22version%22%3A1%7D
+.remanga.org	TRUE	/	TRUE	1818935588	consent:cookie	true
+.remanga.org	TRUE	/	TRUE	1818935588	tour:toast	true
+.remanga.org	TRUE	/	TRUE	1818935588	age:submitted	true
+.remanga.org	TRUE	/	TRUE	1818935588	promo:subscription-hidden:2026-W33	true
+.remanga.org	TRUE	/	TRUE	1818935588	promo:subscription-hidden:2026-W34	true
+.remanga.org	TRUE	/	TRUE	1819772390	promo:subscription-hidden:2026-W36	true
+.remanga.org	TRUE	/	FALSE	1788891299	__ddg8_	q4PIXjNx4QKmX3m4
+.remanga.org	TRUE	/	FALSE	1788891299	__ddg10_	1788890104
+.remanga.org	TRUE	/	FALSE	1788891299	__ddg9_	213.230.93.139
+.remanga.org	TRUE	/	TRUE	1820424522	promo:subscription-hidden:2026-W37	true
