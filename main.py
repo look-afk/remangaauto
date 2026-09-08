@@ -26,6 +26,28 @@ def send_telegram_message(message: str) -> None:
         pass
 
 
+def send_telegram_photo(photo_path: str, caption: str = "") -> None:
+    """Send a debug screenshot to Telegram when screenshot logs are enabled."""
+    if os.getenv("SCREENSHOT_LOGS", "true").lower() != "true":
+        return
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id or not os.path.exists(photo_path):
+        return
+
+    try:
+        with open(photo_path, "rb") as photo:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data={"chat_id": chat_id, "caption": caption[:1024]},
+                files={"photo": (Path(photo_path).name, photo, "image/png")},
+                timeout=20,
+            )
+    except Exception as exc:
+        print(f"⚠️ Не удалось отправить скриншот в Telegram: {exc}")
+
+
 def human_sleep(min_sec=2, max_sec=4):
     time.sleep(random.uniform(min_sec, max_sec))
 
@@ -98,15 +120,21 @@ def parse_netscape_cookies(file_path: str):
     return cookies
 
 
-def safe_screenshot(page, filename="error_screenshot.png"):
+def safe_screenshot(page, filename="error_screenshot.png", caption="📸 Screenshot"):
+    """Save a screenshot locally and optionally send it to Telegram."""
+    path = get_file_path(filename)
     try:
         page.screenshot(
-            path=get_file_path(filename),
+            path=path,
             timeout=5000,
             animations="disabled",
         )
-    except Exception:
-        pass
+        print(f"📸 Скриншот сохранён: {path}")
+        send_telegram_photo(path, caption)
+        return path
+    except Exception as exc:
+        print(f"⚠️ Не удалось сделать скриншот: {exc}")
+        return None
 
 
 def setup_browser(p, proxy_url=None):
@@ -120,7 +148,6 @@ def setup_browser(p, proxy_url=None):
         "--disable-blink-features=AutomationControlled",
     ]
 
-    # Video is optional because it consumes considerable Actor storage.
     record_video = os.getenv("RECORD_VIDEO", "false").lower() == "true"
     context_options = {
         "viewport": {"width": 1280, "height": 720},
@@ -220,12 +247,14 @@ def ensure_authenticated(page):
 
         print("⏳ Ожидание авторизации...")
         human_sleep(6, 8)
+        safe_screenshot(page, "after_login.png", "🔑 После авторизации")
         page.goto(TARGET_URL, timeout=60000, wait_until="commit")
         human_sleep(4, 6)
         return True
 
     except Exception as exc:
         print(f"⚠️ Ошибка авторизации: {exc}")
+        safe_screenshot(page, "auth_error.png", "❌ Ошибка авторизации")
         return False
 
 
@@ -259,16 +288,15 @@ def run_dungeon_bot(proxy_url=None):
                 )
                 print(message)
                 send_telegram_message(message)
-                safe_screenshot(page)
+                safe_screenshot(page, "http_error.png", f"❌ HTTP {status}")
                 return
 
             print("⏳ Ожидаю интерфейс...")
             human_sleep(5, 7)
+            safe_screenshot(page, "page_loaded.png", "🌐 Страница загружена")
 
             if not ensure_authenticated(page):
                 print("⚠️ Авторизация не подтверждена, продолжаю проверку страницы.")
-
-            safe_screenshot(page)
 
             try:
                 close_btn = page.locator('button[aria-label="Закрыть"]')
@@ -287,9 +315,21 @@ def run_dungeon_bot(proxy_url=None):
                     break
 
                 kanji_element = page.locator("span.font-kanji", has_text="寺").first
-                kanji_element.wait_for(state="visible", timeout=20000)
+                try:
+                    kanji_element.wait_for(state="visible", timeout=20000)
+                except Exception:
+                    print(f"🌐 Current URL: {page.url}")
+                    print(f"📄 Title: {page.title()}")
+                    safe_screenshot(
+                        page,
+                        f"cycle_{run_count}_before_kanji.png",
+                        f"🔎 Не найдено 寺 — цикл №{run_count}",
+                    )
+                    raise
+
                 kanji_element.click()
                 print("✅ Кликнул по иероглифу 寺!")
+                safe_screenshot(page, f"cycle_{run_count}_dungeon.png", f"🏯 Катакомбы — цикл №{run_count}")
                 human_sleep(2, 3)
 
                 pass_button = page.locator("text=ПРОЙТИ СНОВА")
@@ -315,6 +355,8 @@ def run_dungeon_bot(proxy_url=None):
                 print("✅ Нажато 'К результатам'.")
                 human_sleep(2, 3)
 
+                safe_screenshot(page, f"cycle_{run_count}_result.png", f"🏆 Результат — цикл №{run_count}")
+
                 page.locator(
                     'button[data-sentry-source-file="pve-result-overlay.tsx"]'
                 ).click(timeout=8000)
@@ -323,7 +365,7 @@ def run_dungeon_bot(proxy_url=None):
 
         except Exception as exc:
             print(f"❌ Ошибка Actor-задачи: {exc}")
-            safe_screenshot(page)
+            safe_screenshot(page, "error_screenshot.png", f"❌ Ошибка Actor: {type(exc).__name__}")
             send_telegram_message(f"❌ Ошибка Remanga Actor: {exc}")
         finally:
             try:
