@@ -150,7 +150,7 @@ def close_open_dialog(page):
 
 def click_temple(page, run_count):
     """
-    Ищет 寺 до 30 секунд. Кликает прямо по тексту, игнорируя перекрытия.
+    Ищет 寺 до 30 секунд. Кликает через чистый JavaScript, игнорируя всё.
     """
     deadline = time.time() + 30
     attempt = 0
@@ -161,12 +161,13 @@ def click_temple(page, run_count):
         close_open_dialog(page)
 
         try:
+            # Ищем иероглиф
             kanji = page.locator('span.font-kanji', has_text='寺').first
             
             if kanji.is_visible(timeout=2000):
                 print(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
-                # ДОБАВЛЕНО force=True (игнорирует невидимые блоки поверх кнопки)
-                kanji.click(timeout=5000, force=True)
+                # ЖЕСТКИЙ КЛИК ЧЕРЕЗ JAVASCRIPT (Пробивает всё)
+                kanji.evaluate("node => node.click()")
                 print("✅ Кликнул по кнопке с иероглифом 寺!")
                 return True
             else:
@@ -185,14 +186,22 @@ def click_temple(page, run_count):
 
 def click_battle(page):
     """
-    Нажимает на кнопку 戰 с использованием жесткого клика (force).
+    Нажимает на кнопку 戰 с использованием чистого JavaScript (node.click).
     """
-    try:
-        battle_btn = page.locator('text=戰').first
-        # ДОБАВЛЕНО force=True (пробивает прозрачные div-слои)
-        battle_btn.click(timeout=5000, force=True)
-    except Exception as exc:
-        raise RuntimeError(f"Не удалось нажать кнопку 戰: {exc}")
+    last_error = None
+    # Делаем 3 попытки клика на всякий случай, если страница моргает
+    for _ in range(3):
+        try:
+            # Ищем только ВИДИМЫЙ текст 戰 (чтобы не кликнуть по скрытому)
+            battle_btn = page.locator('text=戰').locator("visible=true").first
+            # ЖЕСТКИЙ КЛИК ЧЕРЕЗ JAVASCRIPT
+            battle_btn.evaluate("node => node.click()")
+            return
+        except Exception as exc:
+            last_error = exc
+            page.wait_for_timeout(1000)
+            
+    raise RuntimeError(f"Не удалось нажать кнопку 戰: {last_error}")
 
 
 def wait_for_battle_again(page, run_count, attempt):
