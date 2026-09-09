@@ -216,27 +216,8 @@ def run_dungeon_bot(proxy_url=None):
                 safe_screenshot(page, f"cycle_{run_count}_dungeon.png", f"🏯 Катакомбы — цикл №{run_count}")
                 human_sleep(2, 3)
 
-                # 2. Start the dungeon with ПРОЙТИ СНОВА.
-                pass_button = page.get_by_text("ПРОЙТИ СНОВА", exact=True).last
-                pass_button.wait_for(state="visible", timeout=10000)
-                try:
-                    is_disabled = pass_button.evaluate(
-                        "node => node.disabled || node.getAttribute('aria-disabled') === 'true'"
-                    )
-                except Exception:
-                    is_disabled = False
-                if is_disabled:
-                    print("🛑 Энергия закончилась.")
-                    break
-
-                try:
-                    pass_button.click(timeout=10000)
-                except Exception:
-                    pass_button.click(timeout=10000, force=True)
-                print("▶️ Нажато 'ПРОЙТИ СНОВА'.")
-                human_sleep(2, 3)
-
-                # 3. Keep clicking 戰 until the game no longer offers it.
+                # 2. После 寺 сразу ищем и нажимаем 戰.
+                # Никакого поиска или нажатия ПРОЙТИ СНОВА здесь больше нет.
                 attempt = 0
                 while True:
                     attempt += 1
@@ -248,7 +229,7 @@ def run_dungeon_bot(proxy_url=None):
                     click_battle(page)
                     print(f"⚔️ Нажата кнопка 戰 — бой №{attempt}!")
 
-                    # Wait for the battle/result transition before looking for 戰 again.
+                    # Ждём переход результата боя перед следующим поиском 戰.
                     page.wait_for_timeout(5000)
 
                 # The current screen is left untouched when 戰 disappears.
