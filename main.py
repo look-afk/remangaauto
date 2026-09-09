@@ -159,7 +159,6 @@ def find_clickable_temple(page):
     The kanji may be inside a span nested in the button, so click the button,
     not the span itself.
     """
-    # Most reliable case: a button containing the kanji span.
     try:
         buttons = page.locator('button:has(span.font-kanji)')
         for index in range(buttons.count() - 1, -1, -1):
@@ -167,34 +166,22 @@ def find_clickable_temple(page):
             try:
                 if not button.is_visible() or not button.is_enabled():
                     continue
-                text = button.inner_text(timeout=1000).strip()
-                if "寺" in text:
-                    return button
+                kanji_spans = button.locator("span.font-kanji")
+                for span_index in range(kanji_spans.count() - 1, -1, -1):
+                    span = kanji_spans.nth(span_index)
+                    if span.is_visible() and span.inner_text(timeout=1000).strip() == "寺":
+                        return button
             except Exception:
                 continue
     except Exception:
         pass
 
-    # Fallback: any button whose text contains 寺.
     try:
-        buttons = page.locator("button").filter(has_text="寺")
-        for index in range(buttons.count() - 1, -1, -1):
-            button = buttons.nth(index)
-            try:
-                if button.is_visible() and button.is_enabled() and "寺" in button.inner_text(timeout=1000):
-                    return button
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # Last fallback: locate the span and climb to its nearest button.
-    try:
-        spans = page.locator("span.font-kanji", has_text="寺")
+        spans = page.locator("span.font-kanji")
         for index in range(spans.count() - 1, -1, -1):
             span = spans.nth(index)
             try:
-                if not span.is_visible():
+                if not span.is_visible() or span.inner_text(timeout=1000).strip() != "寺":
                     continue
                 button = span.locator("xpath=ancestor::button[1]")
                 if button.count() and button.is_visible() and button.is_enabled():
@@ -215,8 +202,6 @@ def click_temple(page, run_count):
 
     while time.time() < deadline:
         attempt += 1
-
-        # A dialog can sit above the map and intercept the click.
         close_open_dialog(page)
 
         temple_button = find_clickable_temple(page)
@@ -242,28 +227,45 @@ def click_temple(page, run_count):
 
 
 def find_clickable_battle_button(page):
-    """Find a visible and enabled button whose accessible name/text is 戰."""
-    try:
-        buttons = page.get_by_role("button", name="戰", exact=True)
-        for index in range(buttons.count() - 1, -1, -1):
-            button = buttons.nth(index)
-            try:
-                if button.is_visible() and button.is_enabled():
-                    return button
-            except Exception:
-                continue
-    except Exception:
-        pass
+    """Find a visible/enabled button containing a span whose exact text is 戰.
 
+    The button may also contain extra text such as:
+    戰 ПРОЙТИ СНОВА · 8 ен.
+    or
+    戰 ЕЩЁ РАЗ · 8 氣
+    That extra text is intentionally ignored. The only thing that matters is
+    the font-kanji span containing exactly 戰.
+    """
     try:
-        buttons = page.locator("button").filter(has_text="戰")
+        buttons = page.locator('button:has(span.font-kanji)')
         for index in range(buttons.count() - 1, -1, -1):
             button = buttons.nth(index)
             try:
                 if not button.is_visible() or not button.is_enabled():
                     continue
-                text = button.inner_text(timeout=1000).strip()
-                if text == "戰":
+
+                kanji_spans = button.locator("span.font-kanji")
+                for span_index in range(kanji_spans.count() - 1, -1, -1):
+                    span = kanji_spans.nth(span_index)
+                    if not span.is_visible():
+                        continue
+                    if span.inner_text(timeout=1000).strip() == "戰":
+                        return button
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Fallback: find the exact 戰 span and click its nearest button.
+    try:
+        spans = page.locator("span.font-kanji")
+        for index in range(spans.count() - 1, -1, -1):
+            span = spans.nth(index)
+            try:
+                if not span.is_visible() or span.inner_text(timeout=1000).strip() != "戰":
+                    continue
+                button = span.locator("xpath=ancestor::button[1]")
+                if button.count() and button.is_visible() and button.is_enabled():
                     return button
             except Exception:
                 continue
@@ -274,7 +276,7 @@ def find_clickable_battle_button(page):
 
 
 def click_battle(page):
-    """Click only a visible/enabled battle button identified by 戰."""
+    """Click a visible/enabled button containing the 戰 kanji span."""
     deadline = time.time() + 30
     last_error = None
 
@@ -389,14 +391,10 @@ def run_dungeon_bot(proxy_url=None):
                     print(f"🛑 Достигнут MAX_RUNS={max_runs}.")
                     break
 
-                # 1. Find and click the button containing 寺. If it is not found
-                # or the click is intercepted, search again instead of failing immediately.
                 click_temple(page, run_count)
                 safe_screenshot(page, f"cycle_{run_count}_dungeon.png", f"🏯 Катакомбы — цикл №{run_count}")
                 human_sleep(2, 3)
 
-                # 2. После 寺 сразу ищем и нажимаем 戰.
-                # Никакого поиска или нажатия ПРОЙТИ СНОВА здесь нет.
                 attempt = 0
                 while True:
                     attempt += 1
@@ -409,7 +407,6 @@ def run_dungeon_bot(proxy_url=None):
                     print(f"⚔️ Нажата кнопка 戰 — бой №{attempt}!")
                     page.wait_for_timeout(5000)
 
-                # Try to return to the map only if the result overlay exposes the map button.
                 return_button = page.locator('button[data-sentry-source-file="pve-result-overlay.tsx"]').last
                 try:
                     return_button.wait_for(state="visible", timeout=5000)
@@ -420,7 +417,6 @@ def run_dungeon_bot(proxy_url=None):
                     print("✅ Возвращаемся на карту.")
                     human_sleep(4, 6)
                 except Exception:
-                    # Do not assume that the map is usable just because the URL is correct.
                     close_open_dialog(page)
                     if page.locator('span.font-kanji').count() > 0:
                         print("ℹ️ Элементы карты обнаружены, следующий цикл снова будет искать 寺.")
