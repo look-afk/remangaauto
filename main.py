@@ -4,8 +4,13 @@ import random
 import time
 from urllib.parse import urlparse
 
+import requests
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
+
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def human_sleep(a=1, b=2):
@@ -75,6 +80,37 @@ def parse_proxy(proxy_url):
     return result
 
 
+def send_telegram_photo(path, caption=None):
+    """Send a screenshot to Telegram without exposing credentials in logs."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ Telegram не настроен: нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID.")
+        return False
+
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        with open(path, "rb") as photo:
+            response = requests.post(
+                url,
+                data={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "caption": caption or "",
+                },
+                files={"photo": photo},
+                timeout=30,
+            )
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("ok"):
+            print(f"⚠️ Telegram API вернул ошибку: {result.get('description', 'unknown error')}")
+            return False
+
+        print("📨 Скриншот отправлен в Telegram.")
+        return True
+    except Exception as exc:
+        print(f"⚠️ Не удалось отправить скриншот в Telegram: {exc}")
+        return False
+
+
 def safe_screenshot(page, filename, message=None):
     try:
         path = get_file_path(filename)
@@ -82,6 +118,7 @@ def safe_screenshot(page, filename, message=None):
         print(f"📸 Скриншот сохранён: {path}")
         if message:
             print(message)
+        send_telegram_photo(path, message)
     except Exception as exc:
         print(f"⚠️ Не удалось сохранить скриншот: {exc}")
 
@@ -98,39 +135,80 @@ def is_authenticated(page):
         return False
 
 
-def click_battle(page):
-    """Click only the battle control identified by the exact kanji 戰."""
-    battle_text = page.get_by_text("戰", exact=True).last
-    battle_text.wait_for(state="visible", timeout=15000)
+def find_clickable_battle_button(page):
+    """Find a visible and enabled button whose accessible name/text is 戰."""
+    # Prefer the semantic button locator. This avoids selecting a nested text node
+    # and then climbing to a stale/non-clickable ancestor.
+    try:
+        buttons = page.get_by_role("button", name="戰", exact=True)
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            try:
+                if button.is_visible() and button.is_enabled():
+                    return button
+            except Exception:
+                continue
+    except Exception:
+        pass
 
-    battle_btn = battle_text.locator("xpath=ancestor::button[1]")
-    if battle_btn.count() > 0:
-        try:
-            battle_btn.click(timeout=10000)
-        except Exception:
-            battle_btn.click(timeout=10000, force=True)
-    else:
-        try:
-            battle_text.click(timeout=10000)
-        except Exception:
-            battle_text.click(timeout=10000, force=True)
+    # Fallback for buttons whose accessible name is not exposed exactly as 戰.
+    try:
+        buttons = page.locator("button").filter(has_text="戰")
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            try:
+                if not button.is_visible() or not button.is_enabled():
+                    continue
+                text = button.inner_text(timeout=1000).strip()
+                if text == "戰":
+                    return button
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return None
+
+
+def click_battle(page):
+    """Click only a visible/enabled battle button identified by 戰."""
+    deadline = time.time() + 30
+    last_error = None
+
+    while time.time() < deadline:
+        battle_button = find_clickable_battle_button(page)
+        if battle_button is not None:
+            try:
+                battle_button.scroll_into_view_if_needed(timeout=2000)
+                battle_button.click(timeout=5000)
+                return
+            except Exception as exc:
+                last_error = exc
+
+        page.wait_for_timeout(500)
+
+    if last_error:
+        raise RuntimeError(f"Не удалось нажать кнопку 戰: {last_error}") from last_error
+    raise RuntimeError("Не удалось найти активную кнопку 戰 за 30 секунд")
 
 
 def wait_for_battle_again(page, run_count, attempt):
-    """Wait until the next 戰 is available; absence means mana is insufficient."""
+    """Wait until an enabled 戰 button is available; absence means mana is insufficient."""
     print(f"⏳ Жду следующую кнопку 戰 (попытка {attempt})...")
-    battle_text = page.get_by_text("戰", exact=True).last
-    try:
-        battle_text.wait_for(state="visible", timeout=30000)
-        return True
-    except Exception:
-        print("ℹ️ 戰 больше не появился — вероятно, маны больше не хватает.")
-        safe_screenshot(
-            page,
-            f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
-            "🔎 Следующий 戰 недоступен",
-        )
-        return False
+    deadline = time.time() + 30
+
+    while time.time() < deadline:
+        if find_clickable_battle_button(page) is not None:
+            return True
+        page.wait_for_timeout(500)
+
+    print("ℹ️ 戰 больше не появился — вероятно, маны больше не хватает.")
+    safe_screenshot(
+        page,
+        f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
+        "🔎 Следующий 戰 недоступен",
+    )
+    return False
 
 
 def run_dungeon_bot(proxy_url=None):
@@ -217,7 +295,7 @@ def run_dungeon_bot(proxy_url=None):
                 human_sleep(2, 3)
 
                 # 2. После 寺 сразу ищем и нажимаем 戰.
-                # Никакого поиска или нажатия ПРОЙТИ СНОВА здесь больше нет.
+                # Никакого поиска или нажатия ПРОЙТИ СНОВА здесь нет.
                 attempt = 0
                 while True:
                     attempt += 1
