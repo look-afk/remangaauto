@@ -81,20 +81,15 @@ def parse_proxy(proxy_url):
 
 
 def send_telegram_photo(path, caption=None):
-    """Send a screenshot to Telegram without exposing credentials in logs."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ Telegram не настроен: нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID.")
         return False
-
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         with open(path, "rb") as photo:
             response = requests.post(
                 url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": caption or "",
-                },
+                data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption or ""},
                 files={"photo": photo},
                 timeout=30,
             )
@@ -103,7 +98,6 @@ def send_telegram_photo(path, caption=None):
         if not result.get("ok"):
             print(f"⚠️ Telegram API вернул ошибку: {result.get('description', 'unknown error')}")
             return False
-
         print("📨 Скриншот отправлен в Telegram.")
         return True
     except Exception as exc:
@@ -136,7 +130,6 @@ def is_authenticated(page):
 
 
 def close_open_dialog(page):
-    """Close an open Radix dialog/drawer so map buttons can receive pointer events."""
     try:
         dialogs = page.locator('[role="dialog"][data-state="open"]')
         if dialogs.count() > 0:
@@ -154,11 +147,6 @@ def close_open_dialog(page):
 
 
 def find_clickable_temple(page):
-    """Find the clickable map button containing the kanji 寺.
-
-    The kanji may be inside a span nested in the button, so click the button,
-    not the span itself.
-    """
     try:
         buttons = page.locator('button:has(span.font-kanji)')
         for index in range(buttons.count() - 1, -1, -1):
@@ -166,50 +154,30 @@ def find_clickable_temple(page):
             try:
                 if not button.is_visible() or not button.is_enabled():
                     continue
-                kanji_spans = button.locator("span.font-kanji")
-                for span_index in range(kanji_spans.count() - 1, -1, -1):
-                    span = kanji_spans.nth(span_index)
+                spans = button.locator("span.font-kanji")
+                for span_index in range(spans.count() - 1, -1, -1):
+                    span = spans.nth(span_index)
                     if span.is_visible() and span.inner_text(timeout=1000).strip() == "寺":
                         return button
             except Exception:
                 continue
     except Exception:
         pass
-
-    try:
-        spans = page.locator("span.font-kanji")
-        for index in range(spans.count() - 1, -1, -1):
-            span = spans.nth(index)
-            try:
-                if not span.is_visible() or span.inner_text(timeout=1000).strip() != "寺":
-                    continue
-                button = span.locator("xpath=ancestor::button[1]")
-                if button.count() and button.is_visible() and button.is_enabled():
-                    return button
-            except Exception:
-                continue
-    except Exception:
-        pass
-
     return None
 
 
 def click_temple(page, run_count):
-    """Repeatedly search for 寺 and click its containing button."""
     deadline = time.time() + 30
     attempt = 0
     last_error = None
-
     while time.time() < deadline:
         attempt += 1
         close_open_dialog(page)
-
         temple_button = find_clickable_temple(page)
         if temple_button is None:
             print(f"🔎 寺 не найден — повторный поиск (попытка {attempt})...")
             page.wait_for_timeout(1000)
             continue
-
         try:
             print(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
             temple_button.scroll_into_view_if_needed(timeout=2000)
@@ -220,22 +188,12 @@ def click_temple(page, run_count):
             last_error = exc
             print(f"⚠️ Не удалось нажать 寺 (попытка {attempt}) — ищу снова...")
             page.wait_for_timeout(1000)
-
     if last_error:
         raise RuntimeError(f"Не удалось нажать кнопку с 寺 за 30 секунд: {last_error}") from last_error
     raise RuntimeError("Иероглиф 寺 не найден за 30 секунд")
 
 
 def find_clickable_battle_button(page):
-    """Find a visible/enabled button containing a span whose exact text is 戰.
-
-    The button may also contain extra text such as:
-    戰 ПРОЙТИ СНОВА · 8 ен.
-    or
-    戰 ЕЩЁ РАЗ · 8 氣
-    That extra text is intentionally ignored. The only thing that matters is
-    the font-kanji span containing exactly 戰.
-    """
     try:
         buttons = page.locator('button:has(span.font-kanji)')
         for index in range(buttons.count() - 1, -1, -1):
@@ -243,43 +201,21 @@ def find_clickable_battle_button(page):
             try:
                 if not button.is_visible() or not button.is_enabled():
                     continue
-
-                kanji_spans = button.locator("span.font-kanji")
-                for span_index in range(kanji_spans.count() - 1, -1, -1):
-                    span = kanji_spans.nth(span_index)
-                    if not span.is_visible():
-                        continue
-                    if span.inner_text(timeout=1000).strip() == "戰":
+                spans = button.locator("span.font-kanji")
+                for span_index in range(spans.count() - 1, -1, -1):
+                    span = spans.nth(span_index)
+                    if span.is_visible() and span.inner_text(timeout=1000).strip() == "戰":
                         return button
             except Exception:
                 continue
     except Exception:
         pass
-
-    # Fallback: find the exact 戰 span and click its nearest button.
-    try:
-        spans = page.locator("span.font-kanji")
-        for index in range(spans.count() - 1, -1, -1):
-            span = spans.nth(index)
-            try:
-                if not span.is_visible() or span.inner_text(timeout=1000).strip() != "戰":
-                    continue
-                button = span.locator("xpath=ancestor::button[1]")
-                if button.count() and button.is_visible() and button.is_enabled():
-                    return button
-            except Exception:
-                continue
-    except Exception:
-        pass
-
     return None
 
 
 def click_battle(page):
-    """Click a visible/enabled button containing the 戰 kanji span."""
     deadline = time.time() + 30
     last_error = None
-
     while time.time() < deadline:
         battle_button = find_clickable_battle_button(page)
         if battle_button is not None:
@@ -289,36 +225,26 @@ def click_battle(page):
                 return
             except Exception as exc:
                 last_error = exc
-
         page.wait_for_timeout(500)
-
     if last_error:
         raise RuntimeError(f"Не удалось нажать кнопку 戰: {last_error}") from last_error
     raise RuntimeError("Не удалось найти активную кнопку 戰 за 30 секунд")
 
 
 def wait_for_battle_again(page, run_count, attempt):
-    """Wait until an enabled 戰 button is available; absence means mana is insufficient."""
     print(f"⏳ Жду следующую кнопку 戰 (попытка {attempt})...")
     deadline = time.time() + 30
-
     while time.time() < deadline:
         if find_clickable_battle_button(page) is not None:
             return True
         page.wait_for_timeout(500)
-
     print("ℹ️ 戰 больше не появился — вероятно, маны больше не хватает.")
-    safe_screenshot(
-        page,
-        f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
-        "🔎 Следующий 戰 недоступен",
-    )
+    safe_screenshot(page, f"cycle_{run_count}_attempt_{attempt}_no_mana.png", "🔎 Следующий 戰 недоступен")
     return False
 
 
 def run_dungeon_bot(proxy_url=None):
     print("[2026-09-08] Запуск задачи фарма катакомб...")
-
     cookie_json_path = os.getenv("REMANGA_COOKIES_JSON") or get_file_path("cookies.json")
     cookie_file_path = os.getenv("REMANGA_COOKIES_FILE") or get_file_path("cookies.txt")
     cookies = []
@@ -342,33 +268,24 @@ def run_dungeon_bot(proxy_url=None):
         proxy = parse_proxy(proxy_url or os.getenv("CUSTOM_PROXY") or os.getenv("PROXY_URL"))
         if proxy:
             print("🌐 Playwright запускается через настроенный прокси.")
-
         launch_kwargs = {"headless": True, "args": browser_args}
         if proxy:
             launch_kwargs["proxy"] = proxy
-
         browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(viewport={"width": 1440, "height": 900})
-
         if cookies:
             try:
                 context.add_cookies(cookies)
             except Exception as exc:
                 print(f"⚠️ Не удалось применить cookies: {exc}")
-
         page = context.new_page()
         Stealth().apply_stealth_sync(page)
 
         try:
             print("🔗 Переход на https://remanga.org/murim-cards#/map...")
-            response = page.goto(
-                "https://remanga.org/murim-cards#/map",
-                wait_until="domcontentloaded",
-                timeout=60000,
-            )
+            response = page.goto("https://remanga.org/murim-cards#/map", wait_until="domcontentloaded", timeout=60000)
             print(f"🌐 HTTP status: {response.status if response else 'unknown'}")
             print("⏳ Ожидаю интерфейс...")
-
             try:
                 page.wait_for_selector("span.font-kanji", timeout=30000)
             except Exception:
@@ -398,11 +315,9 @@ def run_dungeon_bot(proxy_url=None):
                 attempt = 0
                 while True:
                     attempt += 1
-
                     if not wait_for_battle_again(page, run_count, attempt):
                         print(f"🛑 Маны недостаточно. Завершено боёв: {attempt - 1}.")
                         break
-
                     click_battle(page)
                     print(f"⚔️ Нажата кнопка 戰 — бой №{attempt}!")
                     page.wait_for_timeout(5000)
@@ -418,7 +333,7 @@ def run_dungeon_bot(proxy_url=None):
                     human_sleep(4, 6)
                 except Exception:
                     close_open_dialog(page)
-                    if page.locator('span.font-kanji').count() > 0:
+                    if page.locator("span.font-kanji").count() > 0:
                         print("ℹ️ Элементы карты обнаружены, следующий цикл снова будет искать 寺.")
                     else:
                         print("ℹ️ Кнопка возврата на карту сейчас недоступна.")
