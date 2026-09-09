@@ -114,7 +114,7 @@ def send_telegram_photo(path, caption=None):
 def safe_screenshot(page, filename, message=None):
     try:
         path = get_file_path(filename)
-        page.screenshot(path=path, full_page=True)
+        page.screenshot(path=path, full_page=False)
         print(f"📸 Скриншот сохранён: {path}")
         if message:
             print(message)
@@ -135,10 +135,114 @@ def is_authenticated(page):
         return False
 
 
+def close_open_dialog(page):
+    """Close an open Radix dialog/drawer so map buttons can receive pointer events."""
+    try:
+        dialogs = page.locator('[role="dialog"][data-state="open"]')
+        if dialogs.count() > 0:
+            print("🔒 Обнаружен открытый Dialog — пытаюсь закрыть его.")
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(1000)
+            if page.locator('[role="dialog"][data-state="open"]').count() > 0:
+                print("⚠️ Dialog всё ещё открыт, продолжаю повторный поиск кнопки 寺.")
+                return False
+            print("✅ Dialog закрыт.")
+        return True
+    except Exception as exc:
+        print(f"⚠️ Не удалось проверить/закрыть Dialog: {exc}")
+        return False
+
+
+def find_clickable_temple(page):
+    """Find the clickable map button containing the kanji 寺.
+
+    The kanji may be inside a span nested in the button, so click the button,
+    not the span itself.
+    """
+    # Most reliable case: a button containing the kanji span.
+    try:
+        buttons = page.locator('button:has(span.font-kanji)')
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            try:
+                if not button.is_visible() or not button.is_enabled():
+                    continue
+                text = button.inner_text(timeout=1000).strip()
+                if "寺" in text:
+                    return button
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Fallback: any button whose text contains 寺.
+    try:
+        buttons = page.locator("button").filter(has_text="寺")
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            try:
+                if button.is_visible() and button.is_enabled() and "寺" in button.inner_text(timeout=1000):
+                    return button
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Last fallback: locate the span and climb to its nearest button.
+    try:
+        spans = page.locator("span.font-kanji", has_text="寺")
+        for index in range(spans.count() - 1, -1, -1):
+            span = spans.nth(index)
+            try:
+                if not span.is_visible():
+                    continue
+                button = span.locator("xpath=ancestor::button[1]")
+                if button.count() and button.is_visible() and button.is_enabled():
+                    return button
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return None
+
+
+def click_temple(page, run_count):
+    """Repeatedly search for 寺 and click its containing button."""
+    deadline = time.time() + 30
+    attempt = 0
+    last_error = None
+
+    while time.time() < deadline:
+        attempt += 1
+
+        # A dialog can sit above the map and intercept the click.
+        close_open_dialog(page)
+
+        temple_button = find_clickable_temple(page)
+        if temple_button is None:
+            print(f"🔎 寺 не найден — повторный поиск (попытка {attempt})...")
+            page.wait_for_timeout(1000)
+            continue
+
+        try:
+            print(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
+            temple_button.scroll_into_view_if_needed(timeout=2000)
+            temple_button.click(timeout=5000)
+            print("✅ Кликнул по кнопке с иероглифом 寺!")
+            return True
+        except Exception as exc:
+            last_error = exc
+            print(f"⚠️ Не удалось нажать 寺 (попытка {attempt}) — ищу снова...")
+            page.wait_for_timeout(1000)
+
+    if last_error:
+        raise RuntimeError(f"Не удалось нажать кнопку с 寺 за 30 секунд: {last_error}") from last_error
+    raise RuntimeError("Иероглиф 寺 не найден за 30 секунд")
+
+
 def find_clickable_battle_button(page):
     """Find a visible and enabled button whose accessible name/text is 戰."""
-    # Prefer the semantic button locator. This avoids selecting a nested text node
-    # and then climbing to a stale/non-clickable ancestor.
     try:
         buttons = page.get_by_role("button", name="戰", exact=True)
         for index in range(buttons.count() - 1, -1, -1):
@@ -151,7 +255,6 @@ def find_clickable_battle_button(page):
     except Exception:
         pass
 
-    # Fallback for buttons whose accessible name is not exposed exactly as 戰.
     try:
         buttons = page.locator("button").filter(has_text="戰")
         for index in range(buttons.count() - 1, -1, -1):
@@ -286,11 +389,9 @@ def run_dungeon_bot(proxy_url=None):
                     print(f"🛑 Достигнут MAX_RUNS={max_runs}.")
                     break
 
-                # 1. Find and click only 寺 on the map.
-                kanji_element = page.locator("span.font-kanji", has_text="寺").first
-                kanji_element.wait_for(state="visible", timeout=20000)
-                kanji_element.click()
-                print("✅ Кликнул по иероглифу 寺!")
+                # 1. Find and click the button containing 寺. If it is not found
+                # or the click is intercepted, search again instead of failing immediately.
+                click_temple(page, run_count)
                 safe_screenshot(page, f"cycle_{run_count}_dungeon.png", f"🏯 Катакомбы — цикл №{run_count}")
                 human_sleep(2, 3)
 
@@ -306,11 +407,8 @@ def run_dungeon_bot(proxy_url=None):
 
                     click_battle(page)
                     print(f"⚔️ Нажата кнопка 戰 — бой №{attempt}!")
-
-                    # Ждём переход результата боя перед следующим поиском 戰.
                     page.wait_for_timeout(5000)
 
-                # The current screen is left untouched when 戰 disappears.
                 # Try to return to the map only if the result overlay exposes the map button.
                 return_button = page.locator('button[data-sentry-source-file="pve-result-overlay.tsx"]').last
                 try:
@@ -322,8 +420,10 @@ def run_dungeon_bot(proxy_url=None):
                     print("✅ Возвращаемся на карту.")
                     human_sleep(4, 6)
                 except Exception:
-                    if "murim-cards" in page.url:
-                        print("ℹ️ Интерфейс уже вернулся на карту.")
+                    # Do not assume that the map is usable just because the URL is correct.
+                    close_open_dialog(page)
+                    if page.locator('span.font-kanji').count() > 0:
+                        print("ℹ️ Элементы карты обнаружены, следующий цикл снова будет искать 寺.")
                     else:
                         print("ℹ️ Кнопка возврата на карту сейчас недоступна.")
 
