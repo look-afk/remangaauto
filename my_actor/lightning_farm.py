@@ -134,27 +134,20 @@ def read_chapter(page, url, chapter_id):
     # Быстро пролистываем всю главу и сразу переходим дальше.
     # Не делаем большие паузы между прокрутками: после загрузки страницы
     # достаточно быстро дойти до конца, затем отметить главу прочитанной.
-    page.wait_for_timeout(800)
-
-    last_y = -1
-    for _ in range(120):
-        y = page.evaluate("window.scrollY")
-        height = page.evaluate("document.documentElement.scrollHeight")
-        viewport = page.evaluate("window.innerHeight")
-
-        if y + viewport >= height - 5:
-            break
-        if y == last_y:
-            page.wait_for_timeout(100)
-            height = page.evaluate("document.documentElement.scrollHeight")
-            if y + viewport >= height - 5:
-                break
-
-        last_y = y
-        page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 3, 1800))")
-        page.wait_for_timeout(80)
-
+    # Максимально быстро пролистываем главу без искусственных пауз.
     page.wait_for_timeout(300)
+
+    for _ in range(200):
+        done = page.evaluate("""
+            () => window.scrollY + window.innerHeight >=
+                  document.documentElement.scrollHeight - 5
+        """)
+        if done:
+            break
+
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight * 2)")
+
     result = mark_chapter_read(page, chapter_id)
     print(f"[lightning] marked chapter={chapter_id} progress=100 status={result['status']}")
 
