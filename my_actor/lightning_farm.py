@@ -131,18 +131,30 @@ def read_chapter(page, url, chapter_id):
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(3500)
 
-    # Let the reader render, then mark the chapter as fully read.
-    # Scrolling remains enabled as a fallback for siteside reader state.
-    last_y = -1
-    for _ in range(80):
-        page.mouse.wheel(0, random.randint(900, 1400))
-        page.wait_for_timeout(random.randint(250, 550))
-        y = page.evaluate("window.scrollY")
-        if y == last_y:
-            break
-        last_y = y
-    page.wait_for_timeout(1200)
+    # Быстро пролистываем всю главу и сразу переходим дальше.
+    # Не делаем большие паузы между прокрутками: после загрузки страницы
+    # достаточно быстро дойти до конца, затем отметить главу прочитанной.
+    page.wait_for_timeout(800)
 
+    last_y = -1
+    for _ in range(120):
+        y = page.evaluate("window.scrollY")
+        height = page.evaluate("document.documentElement.scrollHeight")
+        viewport = page.evaluate("window.innerHeight")
+
+        if y + viewport >= height - 5:
+            break
+        if y == last_y:
+            page.wait_for_timeout(100)
+            height = page.evaluate("document.documentElement.scrollHeight")
+            if y + viewport >= height - 5:
+                break
+
+        last_y = y
+        page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 3, 1800))")
+        page.wait_for_timeout(80)
+
+    page.wait_for_timeout(300)
     result = mark_chapter_read(page, chapter_id)
     print(f"[lightning] marked chapter={chapter_id} progress=100 status={result['status']}")
 
