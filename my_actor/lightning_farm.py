@@ -87,7 +87,7 @@ def collect_chapters(page, title_url):
 
 
 def mark_chapter_read(page, chapter_id):
-    """Use the same read-progress endpoint used by the current ReManga reader."""
+    """The real ReManga trigger: activity/views with progress=100."""
     payload = {"chapter": chapter_id, "chapter_id": chapter_id, "progress": 100}
     result = page.evaluate(
         """async ({payload}) => {
@@ -127,19 +127,120 @@ def mark_chapter_read(page, chapter_id):
     return result
 
 
+def check_lightning_reward(page, previous_ids):
+    """Verify whether ReManga created a new reading-lightning billing entry."""
+    result = page.evaluate(
+        """async () => {
+            const urls = [
+                '/api/v2/billing/lightning-payments/',
+                '/api/v2/billing/lightning-payments/?ordering=-created_at&count=20&page=1'
+            ];
+            for (const url of urls) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {'Accept': 'application/json, text/plain, */*'},
+                        credentials: 'include'
+                    });
+                    if (!response.ok) continue;
+                    const data = await response.json();
+                    const items = Array.isArray(data)
+                        ? data
+                        : (Array.isArray(data.results) ? data.results
+                        : (Array.isArray(data.content) ? data.content
+                        : (Array.isArray(data.data) ? data.data : [])));
+                    return {ok: true, items};
+                } catch (_) {}
+            }
+            return {ok: false, items: []};
+        }"""
+    )
+
+    if not result.get("ok"):
+        return []
+
+    new_items = []
+    for item in result.get("items", []):
+        raw_type = item.get("type")
+        if isinstance(raw_type, dict):
+            raw_type = (
+                raw_type.get("id")
+                or raw_type.get("value")
+                or raw_type.get("type")
+                or raw_type.get("code")
+            )
+        description = str(
+            item.get("description")
+            or item.get("comment")
+            or item.get("name")
+            or item.get("text")
+            or item.get("title")
+            or item.get("label")
+            or ""
+        )
+        is_read_reward = str(raw_type) == "27" or bool(
+            __import__("re").search(r"чтен|глав|read", description, __import__("re").I)
+        )
+        if not is_read_reward:
+            continue
+
+        key = str(
+            item.get("uuid")
+            or item.get("id")
+            or item.get("transaction")
+            or item.get("created_at")
+            or ""
+        )
+        if key and key not in previous_ids:
+            new_items.append(item)
+
+    return new_items
+
+
 def read_chapter(page, url, chapter_id):
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(3500)
 
-    # Быстро пролистываем всю главу и сразу переходим дальше.
-    # Не делаем большие паузы между прокрутками: после загрузки страницы
-    # достаточно быстро дойти до конца, затем отметить главу прочитанной.
-    # Абсолютный минимум: не имитируем скролл, сразу прыгаем в конец.
-    # После открытия даём reader только минимальное время на инициализацию.
+    # Full-read trigger: jump to the end, then send the same 100% activity
+    # request used by the current ReManga reader.
     page.wait_for_timeout(50)
     page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+
+    previous = check_lightning_reward(page, set())
+    previous_ids = {
+        str(
+            item.get("uuid")
+            or item.get("id")
+            or item.get("transaction")
+            or item.get("created_at")
+            or ""
+        )
+        for item in previous
+    }
+
     result = mark_chapter_read(page, chapter_id)
     print(f"[lightning] marked chapter={chapter_id} progress=100 status={result['status']}")
+
+    # The reward is created asynchronously by ReManga. Check after the
+    # server has had a moment to process the completed read.
+    page.wait_for_timeout(1200)
+    rewards = check_lightning_reward(page, previous_ids)
+
+    if rewards:
+        amount = sum(
+            abs(
+                float(
+                    item.get("amount")
+                    or item.get("count")
+                    or item.get("value")
+                    or item.get("sum")
+                    or 15
+                )
+            )
+            for item in rewards
+        )
+        print(f"[lightning] REWARD RECEIVED: +{amount:g} lightning")
+    else:
+        print("[lightning] chapter completed; no new reading reward detected")
 
 
 def farm_lightning(page):
@@ -186,6 +287,5 @@ def farm_lightning(page):
             read_set.add(key)
             save_state(state)
             print(f"[lightning] completed {state['count']}/{max_chapters}: {url}")
-            time.sleep(random.uniform(1, 3))
 
     print(f"[lightning] finished: {state['count']} chapters today")
