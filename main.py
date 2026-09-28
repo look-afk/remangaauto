@@ -12,6 +12,9 @@ from playwright_stealth import Stealth
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+MAP_URL = "https://remanga.org/murim-cards#/map"
+COLLECTION_URL = os.getenv("READ_COLLECTION_URL", "https://remanga.org/collections/2197")
+
 
 def human_sleep(a=1, b=2):
     time.sleep(random.uniform(a, b))
@@ -19,6 +22,9 @@ def human_sleep(a=1, b=2):
 
 def get_file_path(name):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+
+
+LIGHTNING_STATE_FILE = get_file_path("lightning_state.json")
 
 
 def parse_netscape_cookies(file_path):
@@ -146,7 +152,150 @@ def close_open_dialog(page):
         return False
 
 
-# --- ПРЯМЫЕ И ПРОСТЫЕ КЛИКИ (ИСПРАВЛЕНО) ---
+# --- МОЛНИИ: ежедневный вход + чтение глав ---
+
+def load_lightning_state():
+    today = time.strftime("%Y-%m-%d")
+    try:
+        with open(LIGHTNING_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        state = {}
+    if state.get("date") != today:
+        # новый день: счётчик сбрасываем, список прочитанных глав оставляем
+        state = {"date": today, "count": 0, "read": state.get("read", [])}
+    return state
+
+
+def save_lightning_state(state):
+    state["read"] = state.get("read", [])[-2000:]
+    try:
+        with open(LIGHTNING_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+    except Exception as exc:
+        print(f"⚠️ Не удалось сохранить состояние молний: {exc}")
+
+
+def collect_collection_titles(page, collection_url):
+    """Собирает ссылки на все тайтлы из коллекции."""
+    print(f"🗂 Открываю коллекцию: {collection_url}")
+    page.goto(collection_url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(4000)
+
+    titles = []
+    stale_rounds = 0
+    for _ in range(40):  # прокрутка для подгрузки списка
+        hrefs = page.eval_on_selector_all(
+            'a[href*="/manga/"]', "els => els.map(e => e.href)"
+        )
+        for h in hrefs:
+            parts = h.split("/manga/", 1)
+            if len(parts) != 2:
+                continue
+            slug = parts[1].split("/")[0].split("?")[0].split("#")[0]
+            if slug:
+                url = f"https://remanga.org/manga/{slug}"
+                if url not in titles:
+                    titles.append(url)
+                    stale_rounds = -1
+        stale_rounds += 1
+        if stale_rounds >= 3:
+            break
+        page.mouse.wheel(0, 2500)
+        page.wait_for_timeout(1200)
+
+    print(f"🗂 Найдено тайтлов: {len(titles)}")
+    return titles
+
+
+def collect_chapter_urls(page, title_url):
+    """Открывает страницу тайтла и собирает ссылки на главы."""
+    print(f"📚 Собираю главы: {title_url}")
+    page.goto(title_url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(4000)
+    for _ in range(6):
+        page.mouse.wheel(0, 1500)
+        page.wait_for_timeout(700)
+    hrefs = page.eval_on_selector_all(
+        'a[href*="/chapter/"]', "els => els.map(e => e.href)"
+    )
+    urls = list(dict.fromkeys(hrefs))
+    print(f"📚 Найдено глав: {len(urls)}")
+    return urls
+
+
+def read_chapter(page, url):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(int(random.uniform(3000, 5000)))
+    # плавно прокручиваем главу до конца, как читатель
+    last_y = -1
+    for _ in range(60):
+        page.mouse.wheel(0, random.randint(900, 1400))
+        page.wait_for_timeout(int(random.uniform(300, 700)))
+        y = page.evaluate("window.scrollY")
+        if y == last_y:
+            break
+        last_y = y
+    page.wait_for_timeout(int(random.uniform(2000, 3500)))
+
+
+def farm_lightning(page):
+    """
+    Ежедневный вход засчитывается самим заходом на сайт (уже сделан выше).
+    Здесь читаем главы до дневного лимита.
+    Начисление идёт за 1-ю, 6-ю, 11-ю... главу дня, поэтому лимит
+    считаем по числу глав: 96 глав = 20 выплат = 60 молний (без подписки),
+    196 глав = 40 выплат = 240 молний (с подпиской).
+    """
+    titles = [t.strip() for t in os.getenv("READ_TITLE_URLS", "").split(",") if t.strip()]
+    if not titles:
+        try:
+            titles = collect_collection_titles(page, COLLECTION_URL)
+        except Exception as exc:
+            print(f"⚠️ Не удалось собрать коллекцию: {exc}")
+    if not titles:
+        print("ℹ️ Тайтлы не найдены — чтение глав пропущено.")
+        return
+    random.shuffle(titles)  # чтобы не читать всегда одно и то же
+
+    max_chapters = int(os.getenv("LIGHTNING_MAX_CHAPTERS", "96"))
+    state = load_lightning_state()
+    if state["count"] >= max_chapters:
+        print(f"✅ Норма глав на сегодня уже выполнена ({state['count']}).")
+        return
+
+    read_set = set(state["read"])
+    for title_url in titles:
+        if state["count"] >= max_chapters:
+            break
+        try:
+            chapters = [u for u in collect_chapter_urls(page, title_url) if u not in read_set]
+        except Exception as exc:
+            print(f"⚠️ Не удалось получить главы {title_url}: {exc}")
+            continue
+
+        for url in chapters:
+            if state["count"] >= max_chapters:
+                break
+            try:
+                read_chapter(page, url)
+            except Exception as exc:
+                print(f"⚠️ Ошибка чтения {url}: {exc}")
+                continue
+            state["count"] += 1
+            state["read"].append(url)
+            read_set.add(url)
+            save_lightning_state(state)
+            print(f"📖 Глава {state['count']}/{max_chapters}: {url}")
+            if state["count"] == 1:
+                safe_screenshot(page, "first_chapter.png", "📖 Первая глава дня прочитана")
+            human_sleep(1, 3)
+
+    print(f"⚡ Чтение завершено: {state['count']} глав за сегодня.")
+    safe_screenshot(page, "lightning_done.png", f"⚡ Прочитано глав: {state['count']}")
+
+
+# --- ПРЯМЫЕ И ПРОСТЫЕ КЛИКИ (СЕРЕБРО) ---
 
 def click_temple(page, run_count):
     """
@@ -161,18 +310,16 @@ def click_temple(page, run_count):
         close_open_dialog(page)
 
         try:
-            # Ищем иероглиф
             kanji = page.locator('span.font-kanji', has_text='寺').first
-            
+
             if kanji.is_visible(timeout=2000):
                 print(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
-                # ЖЕСТКИЙ КЛИК ЧЕРЕЗ JAVASCRIPT (Пробивает всё)
                 kanji.evaluate("node => node.click()")
                 print("✅ Кликнул по кнопке с иероглифом 寺!")
                 return True
             else:
                 print(f"🔎 寺 пока не виден — жду (попытка {attempt})...")
-                
+
         except Exception as exc:
             last_error = exc
             print(f"⚠️ Ошибка при клике на 寺 (попытка {attempt}): {exc}")
@@ -189,18 +336,15 @@ def click_battle(page):
     Нажимает на кнопку 戰 с использованием чистого JavaScript (node.click).
     """
     last_error = None
-    # Делаем 3 попытки клика на всякий случай, если страница моргает
     for _ in range(3):
         try:
-            # Ищем только ВИДИМЫЙ текст 戰 (чтобы не кликнуть по скрытому)
             battle_btn = page.locator('text=戰').locator("visible=true").first
-            # ЖЕСТКИЙ КЛИК ЧЕРЕЗ JAVASCRIPT
             battle_btn.evaluate("node => node.click()")
             return
         except Exception as exc:
             last_error = exc
             page.wait_for_timeout(1000)
-            
+
     raise RuntimeError(f"Не удалось нажать кнопку 戰: {last_error}")
 
 
@@ -220,7 +364,7 @@ def wait_for_battle_again(page, run_count, attempt):
 
 
 def run_dungeon_bot(proxy_url=None):
-    print("[2026-09-08] Запуск задачи фарма катакомб...")
+    print("[2026-09-28] Запуск задачи фарма катакомб и молний...")
     cookie_json_path = os.getenv("REMANGA_COOKIES_JSON") or get_file_path("cookies.json")
     cookie_file_path = os.getenv("REMANGA_COOKIES_FILE") or get_file_path("cookies.txt")
     cookies = []
@@ -258,8 +402,8 @@ def run_dungeon_bot(proxy_url=None):
         Stealth().apply_stealth_sync(page)
 
         try:
-            print("🔗 Переход на https://remanga.org/murim-cards#/map...")
-            response = page.goto("https://remanga.org/murim-cards#/map", wait_until="domcontentloaded", timeout=60000)
+            print(f"🔗 Переход на {MAP_URL}...")
+            response = page.goto(MAP_URL, wait_until="domcontentloaded", timeout=60000)
             print(f"🌐 HTTP status: {response.status if response else 'unknown'}")
             print("⏳ Ожидаю интерфейс...")
             try:
@@ -272,6 +416,19 @@ def run_dungeon_bot(proxy_url=None):
                 print("🍪✅ Cookies рабочие — вход через логин/пароль не требуется.")
             else:
                 print("⚠️ Не удалось подтвердить авторизацию по cookies.")
+
+            # ⚡ молнии: ежедневный вход уже засчитан, читаем главы
+            if os.getenv("FARM_LIGHTNING", "1") == "1":
+                try:
+                    farm_lightning(page)
+                except Exception as exc:
+                    print(f"⚠️ Ошибка фарма молний: {exc}")
+                # возвращаемся на карту катакомб для серебра
+                page.goto(MAP_URL, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_selector("span.font-kanji", timeout=30000)
+                except Exception:
+                    page.wait_for_timeout(5000)
 
             run_count = 0
             max_runs = int(os.getenv("MAX_RUNS", "0"))
