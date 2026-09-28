@@ -56,9 +56,22 @@ def get_auth_token(page):
     )
 
 
+def _goto_partial(page, url, timeout=20000):
+    target = url.rstrip("/")
+    try:
+        page.goto(url, wait_until="commit", timeout=timeout)
+        return
+    except Exception as exc:
+        current = page.url.rstrip("/")
+        if current == target or current.startswith(target + "?") or current.startswith(target + "#"):
+            print(f"[lightning] navigation timeout, using partially loaded page: {url}")
+            return
+        raise exc
+
+
 def collect_collection_titles(page, collection_url):
-    page.goto(collection_url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(4000)
+    _goto_partial(page, collection_url)
+    page.wait_for_timeout(2000)
     titles = []
     stale = 0
     for _ in range(40):
@@ -83,11 +96,14 @@ def collect_collection_titles(page, collection_url):
 
 
 def collect_chapters(page, title_url):
-    page.goto(title_url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(3000)
-    for _ in range(8):
-        page.mouse.wheel(0, 1600)
-        page.wait_for_timeout(500)
+    _goto_partial(page, title_url)
+    page.wait_for_timeout(1500)
+
+    # The chapter list can be lazy-loaded. Scroll a few times, but do not
+    # wait for the whole page's "domcontentloaded" event.
+    for _ in range(6):
+        page.mouse.wheel(0, 1800)
+        page.wait_for_timeout(350)
 
     hrefs = page.eval_on_selector_all(
         'a[href*="/manga/"]',
