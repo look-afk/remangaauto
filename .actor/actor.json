@@ -6,6 +6,7 @@
     "description": "Playwright automation actor for the ReManga Murim Cards map.",
     "version": "1.0",
     "buildTag": "latest",
+    "generatedBy": "GPT-5.6 Luna",
     "inputSchema": "./input_schema.json",
     "dockerfile": "../Dockerfile"
 }
