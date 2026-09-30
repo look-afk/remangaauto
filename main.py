@@ -284,32 +284,35 @@ def click_temple(page, run_count):
 
 def click_battle(page):
     """
-    Нажимает на кнопку 戰 (или ПРОЙТИ СНОВА, которая тоже содержит этот текст).
+    Нажимает на кнопку 血.
+    Использует JS click(), потому что внутренний div с иероглифом
+    может находиться под другим элементом и Playwright click() получает
+    "intercepts pointer events".
     """
     try:
-        # Кликаем напрямую по элементу с текстом 戰
-        battle_btn = page.locator('text=戰').first
-        battle_btn.click(timeout=5000)
+        battle_btn = page.locator('text=血').first
+        battle_btn.wait_for(state="visible", timeout=10000)
+        battle_btn.evaluate("(el) => el.click()")
     except Exception as exc:
-        raise RuntimeError(f"Не удалось нажать кнопку 戰: {exc}")
+        raise RuntimeError(f"Не удалось нажать кнопку 血: {exc}") from exc
 
 
 def wait_for_battle_again(page, run_count, attempt):
     """
-    Ожидает появления кнопки боя (戰)
+    Ожидает появления кнопки боя (血)
     """
-    print(f"⏳ Жду следующую кнопку 戰 (попытка {attempt})...")
+    print(f"⏳ Жду следующую кнопку 血 (попытка {attempt})...")
     try:
-        # Ищем и ждем появления текста 戰
-        battle_btn = page.locator('text=戰').first
+        # Ищем и ждем появления текста 血
+        battle_btn = page.locator('text=血').first
         battle_btn.wait_for(state="visible", timeout=30000)
         return True
     except Exception:
-        print("ℹ️ 戰 больше не появился — вероятно, маны больше не хватает.")
+        print("ℹ️ 血 больше не появился — вероятно, маны больше не хватает.")
         safe_screenshot(
             page,
             f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
-            "🔎 Следующий 戰 недоступен",
+            "🔎 Следующий 血 недоступен",
         )
         return False
 
@@ -558,11 +561,11 @@ def run_dungeon_bot(proxy_url=None):
                         )
                         break
 
-                    # Нажимаем напрямую на текст 戰
+                    # Нажимаем напрямую на текст 血
                     click_battle(page)
 
                     print(
-                        f"⚔️ Нажата кнопка 戰 — "
+                        f"⚔️ Нажата кнопка 血 — "
                         f"бой №{attempt}!"
                     )
 
