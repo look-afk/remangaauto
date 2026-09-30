@@ -125,6 +125,53 @@ def browser_fetch(page, method, url, token=None, json_body=None):
         return {"status": 0, "text": str(exc)}
 
 
+def real_read_and_sniff(page, chapter_url):
+    """
+    Один раз читает главу по-настоящему (открывает страницу, долистывает
+    до конца, ждёт), попутно записывая ВСЕ запросы к api.remanga.org.
+
+    Нужно, чтобы узнать, какой запрос реально шлёт сайт при чтении —
+    наш угаданный эндпоинт отдаёт 204, но начисления не происходит,
+    значит это не тот вызов (или нужен ещё какой-то сигнал).
+    """
+    captured = []
+
+    def on_response(response):
+        try:
+            url = response.url
+            if "api.remanga.org" in url:
+                captured.append((response.request.method, url, response.status))
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+    try:
+        page.goto(chapter_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
+        last_y = -1
+        for _ in range(40):
+            page.mouse.wheel(0, random.randint(800, 1300))
+            page.wait_for_timeout(random.randint(250, 450))
+            y = page.evaluate("window.scrollY")
+            if y == last_y:
+                break
+            last_y = y
+        page.wait_for_timeout(4000)  # даём сайту время отправить запрос о прочтении
+    finally:
+        try:
+            page.remove_listener("response", on_response)
+        except Exception:
+            pass
+
+    print(f"[lightning] диагностика реального чтения {chapter_url}:")
+    if not captured:
+        print("    (сайт не сделал ни одного запроса к api.remanga.org за это время)")
+    for method, url, status in captured:
+        print(f"    {method} {url} -> {status}")
+
+    return captured
+
+
 def _goto_partial(page, url, timeout=20000):
     target = url.rstrip("/")
     try:
@@ -366,10 +413,21 @@ def farm_lightning(page):
                 break
 
             chapter_id = chapter["id"]
-            ok, status, endpoint, text = mark_chapter_read(
-                page, token, chapter_id, log_raw=not diagnosed
-            )
-            diagnosed = True
+
+            if not diagnosed:
+                # Первую главу за весь прогон читаем по-настоящему и
+                # смотрим, какие запросы шлёт сам сайт — это надёжнее,
+                # чем гадать эндпоинт вслепую.
+                chapter_url = f"{SITE_ORIGIN}/manga/{slug}/{chapter_id}"
+                real_read_and_sniff(page, chapter_url)
+                ok, status, endpoint, text = mark_chapter_read(
+                    page, token, chapter_id, log_raw=True
+                )
+                diagnosed = True
+            else:
+                ok, status, endpoint, text = mark_chapter_read(
+                    page, token, chapter_id, log_raw=False
+                )
             last_index = chapter.get("index", last_index)
 
             if not ok:
