@@ -10,7 +10,11 @@ ROOT_MAIN = ROOT / "main.py"
 if not ROOT_MAIN.exists():
     raise FileNotFoundError(f"Root bot implementation not found: {ROOT_MAIN}")
 
-spec = importlib.util.spec_from_file_location("remangaauto_root_main", ROOT_MAIN)
+spec = importlib.util.spec_from_file_location(
+    "remangaauto_root_main",
+    ROOT_MAIN,
+)
+
 if spec is None or spec.loader is None:
     raise ImportError(f"Could not load bot implementation: {ROOT_MAIN}")
 
@@ -21,9 +25,10 @@ from .lightning_farm import farm_lightning
 
 
 def main() -> None:
-    # Override the old HTML selector based implementation with the current
-    # ReManga chapter URL + activity/views progress API implementation.
+    # Используем старый браузерный режим lightning farm:
+    # открыть главу -> реально проскроллить reader до конца -> следующая глава.
     root_main.farm_lightning = farm_lightning
+
     proxy_url = os.getenv("CUSTOM_PROXY") or os.getenv("PROXY_URL")
     root_main.run_dungeon_bot(proxy_url=proxy_url)
 
