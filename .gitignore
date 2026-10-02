@@ -162,3 +162,9 @@ cython_debug/
 #  Ignores the folder created when setting Project Settings in the Zed editor. Can be commented out
 #  to share Project Settings within a team
 .zed
+
+# Локальные артефакты прогонов бота
+lightning_state.json
+page_loaded.png
+error_screenshot.png
+cycle_*.png

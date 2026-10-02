@@ -427,6 +427,25 @@ def run_dungeon_bot(proxy_url=None):
 
         Stealth().apply_stealth_sync(page)
 
+        # Сессия умеет перезапускать браузер, если Chromium вылетел —
+        # её же передаём фармеру молний.
+        from my_actor.reader import BrowserSession
+
+        session = BrowserSession.from_existing(
+            p,
+            browser,
+            context,
+            page,
+            launch_kwargs=launch_kwargs,
+            context_kwargs={
+                "viewport": {
+                    "width": 1440,
+                    "height": 900,
+                }
+            },
+            cookies=cookies,
+        )
+
         try:
             print(
                 "🔗 Переход на "
@@ -477,14 +496,27 @@ def run_dungeon_bot(proxy_url=None):
                     "авторизацию по cookies."
                 )
 
+            # 🪙 Серебро: тратим энергию на локации через API и забираем
+            # ежедневные задания. Работает без браузера — секунды вместо минут.
+            if os.getenv("FARM_SILVER", "1") == "1":
+                try:
+                    from my_actor.silver_farm import farm_silver
+
+                    farm_silver()
+                except Exception as exc:
+                    print(f"⚠️ Ошибка фарма серебра: {exc}")
+
             # ⚡ Молнии: используем отдельный актуальный фармер,
             # не меняя рабочую инициализацию браузера/прокси.
             if os.getenv("FARM_LIGHTNING", "1") == "1":
                 try:
                     from my_actor.lightning_farm import farm_lightning
-                    farm_lightning(page)
+
+                    farm_lightning(page, session=session)
+                    page = session.get()
                 except Exception as exc:
                     print(f"⚠️ Ошибка фарма молний: {exc}")
+                    page = session.get()
 
                 # Возвращаемся на карту перед основной фармой.
                 page.goto(
@@ -509,7 +541,16 @@ def run_dungeon_bot(proxy_url=None):
                 )
             )
 
-            while True:
+            # Старый UI-цикл катакомб: серебро теперь фармится через API
+            # (FARM_SILVER) — быстрее и без зависимости от анимаций.
+            dungeon_ui = os.getenv("FARM_DUNGEON_UI", "0") == "1"
+            if not dungeon_ui:
+                print(
+                    "⏭ UI-цикл катакомб выключен "
+                    "(FARM_DUNGEON_UI=1 — включить обратно)."
+                )
+
+            while dungeon_ui:
 
                 run_count += 1
 

@@ -1,22 +1,54 @@
-import json
+"""Фарм молний: чтение глав с реальным скроллом (движок reader.py).
+
+Что изменилось относительно старой версии:
+  * главы и их статус «прочитано» берутся из API (`/api/titles/chapters/?user_data=1`),
+    а не вырезаются из DOM ссылками `a[href*="/manga/"]`;
+  * скролл идёт до маркера `chapter-end` (тот самый, который сайт считает
+    концом главы) — быстрее и надёжнее ручного колеса «пока высота не вылезла»;
+  * флаг `viewed` проверяется и догоняется через API, а не «прочитал = ок»;
+  * уже прочитанные на сайте главы пропускаются — не тратим энергию лимита впустую;
+  * браузер перезапускается сам, если Chromium вылетел;
+  * после чтения забираются дневные задания (серебро + молнии).
+"""
+
+from __future__ import annotations
+
 import os
 import random
 import time
-from urllib.parse import urlparse
 
+from . import reader as rdr
+from .log import log as _log
+from .remanga_api import SITE, api_from_env
+from .silver_farm import claim_dailies
 
 LIGHTNING_STATE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "lightning_state.json",
 )
-SITE_ORIGIN = "https://remanga.org"
 
 
-def _today():
+def _today() -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 3 * 3600))
 
 
-def load_state():
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None or v == "":
+        return default
+    return v.strip().lower() not in ("0", "false", "no", "off")
+
+
+def load_state() -> dict:
+    import json
+
     try:
         with open(LIGHTNING_STATE_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
@@ -25,209 +57,273 @@ def load_state():
 
     if state.get("date") != _today():
         state = {"date": _today(), "count": 0, "read": state.get("read", [])}
-
+    state.setdefault("count", 0)
+    state.setdefault("read", [])
     return state
 
 
-def save_state(state):
+def save_state(state: dict) -> None:
+    import json
+
     state["read"] = state.get("read", [])[-2000:]
-    with open(LIGHTNING_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False)
+    try:
+        with open(LIGHTNING_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+    except Exception as exc:
+        _log(f"[lightning] не удалось сохранить состояние: {exc}")
 
 
-def collect_collection_titles(page, collection_url):
+def slug_from_url(value: str) -> str:
+    v = (value or "").strip().rstrip("/")
+    if "://" in v:
+        from urllib.parse import urlparse
+
+        parts = [p for p in urlparse(v).path.split("/") if p]
+        if not parts:
+            return ""
+        if parts[0] == "manga" and len(parts) > 1:
+            return parts[1]
+        return parts[-1]
+    if v.startswith("manga/"):
+        v = v[6:]
+    return v.split("/")[0]
+
+
+# ---------------------------------------------------------------- сбор тайтлов
+
+def collect_collection_titles(page, collection_url: str) -> list[str]:
+    """Запасной путь: тайтлы коллекции со страницы сайта (если нужен API — дайте слаги)."""
     page.goto(collection_url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(3000)
 
-    titles = []
+    titles: list[str] = []
     stale = 0
 
-    for _ in range(40):
+    for _ in range(30):
         hrefs = page.eval_on_selector_all(
-            'a[href*="/manga/"]',
-            "els => els.map(e => e.href)",
-        )
+            'a[href*="/manga/"]', "els => els.map(e => e.href)")
 
         before = len(titles)
-
         for href in hrefs:
-            parts = href.split("/manga/", 1)
-            if len(parts) != 2:
-                continue
-
-            slug = parts[1].split("/")[0].split("?")[0].split("#")[0]
+            slug = slug_from_url(href)
             if slug:
-                url = f"{SITE_ORIGIN}/manga/{slug}"
+                url = f"{SITE}/manga/{slug}"
                 if url not in titles:
                     titles.append(url)
-
         stale = stale + 1 if len(titles) == before else 0
         if stale >= 3:
             break
 
-        page.mouse.wheel(0, 2500)
-        page.wait_for_timeout(1200)
+        page.mouse.wheel(0, 3000)
+        page.wait_for_timeout(900)
 
-    print(f"[lightning] titles={len(titles)}")
+    _log(f"[lightning] коллекция: {len(titles)} тайтлов")
     return titles
 
 
-def collect_chapters(page, title_url):
-    page.goto(title_url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(3000)
-
-    for _ in range(8):
-        page.mouse.wheel(0, 1600)
-        page.wait_for_timeout(500)
-
-    hrefs = page.eval_on_selector_all(
-        'a[href*="/manga/"]',
-        "els => els.map(e => e.href)",
-    )
-
-    chapters = []
-    seen_ids = set()
-
-    for href in hrefs:
-        parsed = urlparse(href)
-        parts = [p for p in parsed.path.split("/") if p]
-
-        if len(parts) != 3 or parts[0] != "manga" or not parts[2].isdigit():
-            continue
-
-        chapter_id = parts[2]
-
-        if chapter_id in seen_ids:
-            continue
-
-        seen_ids.add(chapter_id)
-        chapters.append((href, int(chapter_id)))
-
-    chapters.sort(key=lambda item: item[1], reverse=True)
-
-    print(f"[lightning] {title_url}: chapters={len(chapters)}")
-    return chapters
+def _titles_from_env() -> list[str]:
+    out = []
+    for name in ("READ_TITLE_URLS", "READ_TITLE_SLUGS"):
+        raw = os.getenv(name) or ""
+        for part in raw.split(","):
+            part = part.strip()
+            if part:
+                out.append(f"{SITE}/manga/{slug_from_url(part)}" if "://" not in part
+                           else part)
+    seen, uniq = set(), []
+    for u in out:
+        if u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return uniq
 
 
-def read_chapter(page, url, chapter_id):
-    print(f"[lightning] открываю главу {chapter_id}: {url}")
+# ---------------------------------------------------------------- выбор глав
 
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+def chapters_to_read(api, slug: str, read_set: set[str], skip_paid: bool = True):
+    """Главы тайтла, которые ещё не отмечены прочитанными (API + state)."""
+    info = api.title_info(slug)
+    if not info:
+        return None, []
+    branches = info.get("branches") or []
+    if not branches:
+        return info, []
 
-    # Старый режим: глава действительно открывается в браузере,
-    # reader успевает загрузить страницы, затем мы физически прокручиваем
-    # её от начала до конца. Никакого ручного POST progress=100.
-    page.wait_for_timeout(3500)
+    todo = []
+    for branch in (branches[:1] if os.getenv("READ_BRANCHES", "first") != "all" else branches):
+        chapters = api.all_chapters(branch["id"])
+        for ch in chapters:
+            cid = ch.get("id")
+            if not cid:
+                continue
+            if rdr.view_is_read(ch.get("viewed")):
+                continue
+            if str(cid) in read_set:
+                continue
+            if skip_paid and ch.get("is_paid") and not ch.get("is_bought") \
+                    and not ch.get("is_free_today"):
+                continue
+            ch["_branch_id"] = branch["id"]
+            todo.append(ch)
 
-    last_y = -1
-    stable_count = 0
-
-    for _ in range(160):
-        y = page.evaluate("window.scrollY")
-        height = page.evaluate("document.documentElement.scrollHeight")
-        viewport = page.evaluate("window.innerHeight")
-
-        if y + viewport >= height - 5:
-            # Даём lazy-loaded последним страницам дорендериться.
-            page.wait_for_timeout(1200)
-
-            new_height = page.evaluate("document.documentElement.scrollHeight")
-            new_y = page.evaluate("window.scrollY")
-
-            if new_y + viewport >= new_height - 5:
-                break
-
-        if y == last_y:
-            stable_count += 1
-            if stable_count >= 3:
-                page.wait_for_timeout(500)
-                height = page.evaluate("document.documentElement.scrollHeight")
-                y = page.evaluate("window.scrollY")
-                viewport = page.evaluate("window.innerHeight")
-                if y + viewport >= height - 5:
-                    break
-        else:
-            stable_count = 0
-
-        last_y = y
-
-        # Именно автоскролл, а не прыжок сразу в самый низ.
-        step = max(int(viewport * 2.5), 1200)
-        page.mouse.wheel(0, step)
-        page.wait_for_timeout(180)
-
-    # Последний проход до самого низа, чтобы reader получил финальное событие scroll.
-    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-    page.wait_for_timeout(1500)
-
-    print(f"[lightning] глава {chapter_id} реально проскроллена до конца")
+    todo.sort(key=lambda c: (int(c.get("index") or 0), int(c.get("id") or 0)))
+    return info, todo
 
 
-def farm_lightning(page):
-    collection_url = os.getenv(
-        "READ_COLLECTION_URL",
-        f"{SITE_ORIGIN}/collections/2197",
-    )
+# ---------------------------------------------------------------- основной фарм
 
-    titles = [
-        x.strip()
-        for x in os.getenv("READ_TITLE_URLS", "").split(",")
-        if x.strip()
-    ]
+def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
+    """Читает главы до дневного лимита, отмечает прочитанным, забирает задания.
 
-    if not titles:
-        titles = collect_collection_titles(page, collection_url)
+    Env:
+      READ_TITLE_URLS / READ_TITLE_SLUGS — конкретные тайтлы (через запятую)
+      READ_COLLECTION_URL                — если тайтлы не заданы (DOM-сбор)
+      LIGHTNING_MAX_CHAPTERS             — дневной лимит глав (96)
+      LIGHTNING_SKIP_PAID                — 1 (по умолчанию) пропускать платные
+      LIGHTNING_PAUSE_MS                 — пауза между главами, '300-1200'
+    """
+    started = time.time()
+    max_chapters = _env_int("LIGHTNING_MAX_CHAPTERS", 96)
+    skip_paid = _env_bool("LIGHTNING_SKIP_PAID", True)
 
-    if not titles:
-        print("[lightning] no titles found")
-        return
-
-    max_chapters = int(os.getenv("LIGHTNING_MAX_CHAPTERS", "96"))
+    if api is None:
+        api = api_from_env(log=log)
+    if api is None:
+        log("[lightning] куки не найдены — фарм пропущен")
+        return {"ok": False, "reason": "no_cookies"}
 
     state = load_state()
-
     if state["count"] >= max_chapters:
-        print(f"[lightning] daily limit already reached: {state['count']}")
-        return
+        log(f"[lightning] дневной лимит уже достигнут: {state['count']}")
+        return {"ok": True, "reason": "limit", "count": state["count"]}
 
-    read_set = set(str(x) for x in state.get("read", []))
+    if page is None and session is None:
+        log("[lightning] нет страницы/сессии")
+        return {"ok": False, "reason": "no_page"}
+
+    # --- список тайтлов
+    titles = _titles_from_env()
+    if not titles:
+        env_collection = os.getenv("READ_COLLECTION_URL") or f"{SITE}/collections/2197"
+        try:
+            titles = collect_collection_titles(session.get() if session else page,
+                                               env_collection)
+        except Exception as exc:
+            log(f"[lightning] сбор коллекции не удался: {exc}")
+            titles = []
+    if not titles:
+        log("[lightning] тайтлы не найдены")
+        return {"ok": False, "reason": "no_titles"}
+
+    read_set = {str(x) for x in state.get("read", [])}
     random.shuffle(titles)
+
+    read_cfg = rdr.scroll_cfg_from_env()
+    pause_raw = os.getenv("LIGHTNING_PAUSE_MS") or "400-1600"
+    try:
+        lo_s, hi_s = pause_raw.split("-", 1)
+        pause_lo, pause_hi = int(lo_s), int(hi_s)
+    except ValueError:
+        pause_lo = pause_hi = int(pause_raw) if pause_raw.isdigit() else 800
+
+    read_done = 0
+    claimed_after = False
+    errors = 0
+    note = ""
 
     for title_url in titles:
         if state["count"] >= max_chapters:
+            note = "достигнут LIGHTNING_MAX_CHAPTERS"
             break
 
-        try:
-            chapters = collect_chapters(page, title_url)
-        except Exception as exc:
-            print(f"[lightning] chapter discovery failed: {title_url}: {exc}")
+        slug = slug_from_url(title_url)
+        if not slug:
             continue
 
-        for url, chapter_id in chapters:
+        try:
+            info, todo = chapters_to_read(api, slug, read_set, skip_paid)
+        except Exception as exc:
+            log(f"[lightning] не удалось получить главы {slug}: {exc}")
+            errors += 1
+            continue
+        if not info:
+            log(f"[lightning] тайтл не найден: {slug}")
+            continue
+        if not todo:
+            continue
+
+        title_id = info.get("id")
+        name = info.get("main_name") or info.get("rus_name") or slug
+        log(f"[lightning] ▶ {name}: непрочитанных глав {len(todo)}")
+
+        for ch in todo:
             if state["count"] >= max_chapters:
                 break
 
-            key = str(chapter_id)
+            cid = int(ch["id"])
+            url = f"{SITE}/manga/{slug}/{cid}?page=1"
+            attempts = 0
+            ok = False
 
-            if key in read_set:
-                continue
+            while attempts < 3 and not ok:
+                attempts += 1
+                try:
+                    pg = session.get() if session else page
+                    res = rdr.read_chapter(pg, url, cid, read_cfg)
+                    status = rdr.mark_viewed(api, ch, title_id, ch.get("_branch_id"),
+                                             read_cfg, log=log)
+                    ok = True
+                    log(f"[lightning]   глава {cid}: скролл "
+                        f"{'конец в кадре' if res.get('at_end') else 'НЕ в кадре'}, "
+                        f"отметка: {status}")
+                except Exception as exc:
+                    if rdr.looks_dead(exc) and session is not None:
+                        log(f"[lightning]   браузер вылетел ({exc}) — перезапуск")
+                        session.restart()
+                        errors += 1
+                        continue
+                    log(f"[lightning]   ошибка чтения главы {cid}: {exc}")
+                    errors += 1
+                    break
 
-            try:
-                read_chapter(page, url, chapter_id)
-            except Exception as exc:
-                print(f"[lightning] failed chapter={chapter_id}: {exc}")
+            if not ok:
                 continue
 
             state["count"] += 1
-            state.setdefault("read", []).append(key)
-            read_set.add(key)
+            state.setdefault("read", []).append(cid)
+            read_set.add(str(cid))
+            read_done += 1
             save_state(state)
 
-            print(
-                f"[lightning] completed "
-                f"{state['count']}/{max_chapters}: {url}"
-            )
+            if not claimed_after and state["count"] >= 10:
+                claim_dailies(api, log=log)
+                claimed_after = True
 
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(pause_lo, pause_hi) / 1000.0)
 
-    print(f"[lightning] finished: {state['count']} chapters today")
+    if not claimed_after:
+        claim_dailies(api, log=log)
+
+    save_state(state)
+    result = {
+        "ok": True,
+        "read": read_done,
+        "total_today": state["count"],
+        "errors": errors,
+        "note": note,
+        "seconds": round(time.time() - started, 1),
+    }
+    log(f"[lightning] готово: прочитано {read_done} (сегодня {state['count']}"
+        f"/{max_chapters}), ошибок {errors}"
+        + (f", {note}" if note else ""))
+    return result
+
+
+__all__ = [
+    "farm_lightning",
+    "collect_collection_titles",
+    "load_state",
+    "save_state",
+    "slug_from_url",
+    "chapters_to_read",
+]

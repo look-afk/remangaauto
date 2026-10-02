@@ -1,26 +1,60 @@
 {
     "$schema": "https://apify.com/schemas/v1/input.ide.json",
-    "title": "Python Playwright Scraper",
+    "title": "ReManga Auto Input",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-        "start_urls": {
-            "title": "Start URLs",
-            "type": "array",
-            "description": "URLs to start with",
-            "prefill": [
-                {
-                    "url": "https://apify.com"
-                }
-            ],
-            "editor": "requestListSources"
+        "cookies": {
+            "title": "Cookies",
+            "description": "Куки аккаунта remanga.org: содержимое cookies.json (Playwright storage_state) или cookies.txt (Netscape). Нужен ключ auth:token.",
+            "type": "string",
+            "editor": "textarea"
         },
-        "max_depth": {
-            "title": "Maximum depth",
+        "farmSilver": {
+            "title": "Фармить серебро (API)",
+            "description": "Тратит энергию на локации карты Murim Cards через API и забирает ежедневные задания. Быстро и без браузера.",
+            "type": "boolean",
+            "default": true
+        },
+        "silverMaxRaids": {
+            "title": "Максимум рейдов за запуск",
+            "description": "0 — фармить всю доступную энергию.",
             "type": "integer",
-            "description": "Depth to which to scrape to",
-            "default": 1
+            "default": 0,
+            "minimum": 0
+        },
+        "farmLightning": {
+            "title": "Фармить молнии (чтение глав)",
+            "description": "Читает главы реальным скроллом и отмечает их прочитанными.",
+            "type": "boolean",
+            "default": true
+        },
+        "maxChaptersPerDay": {
+            "title": "Лимит глав в день",
+            "type": "integer",
+            "default": 96,
+            "minimum": 1
+        },
+        "readTitleUrls": {
+            "title": "Тайтлы для чтения",
+            "description": "Ссылки или слаги через запятую. Пусто — тайтлы берутся из readCollectionUrl.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        },
+        "readCollectionUrl": {
+            "title": "Коллекция для сбора тайтлов",
+            "type": "string",
+            "default": "https://remanga.org/collections/2197"
+        },
+        "dungeonUiLoop": {
+            "title": "Старый UI-цикл катакомб",
+            "description": "Клики по карте вместо API. Медленно; оставлено для отладки.",
+            "type": "boolean",
+            "default": false
         }
     },
-    "required": ["start_urls"]
+    "required": []
 }

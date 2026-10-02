@@ -3,10 +3,10 @@
     "actorSpecification": 1,
     "name": "remanga-auto",
     "title": "ReManga Auto",
-    "description": "Playwright automation actor for the ReManga Murim Cards map.",
-    "version": "1.0",
+    "description": "Playwright automation actor for ReManga: farms silver (event points) and lightning on the Murim Cards map and reads chapters with a verified fast scroll.",
+    "version": "1.1",
     "buildTag": "latest",
-    "generatedBy": "GPT-5.6 Luna",
+    "generatedBy": "opencode with mimo-v2.6-flash-free",
     "inputSchema": "./input_schema.json",
     "dockerfile": "../Dockerfile"
 }
