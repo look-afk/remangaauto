@@ -275,6 +275,7 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
 
     silver_after = api.event_points()
     profile = api.profile()
+    dailies_lightning = sum(int(t.get("lightning_reward") or 0) for t in claimed)
     result = {
         "ok": True,
         "raids": raids,
@@ -282,18 +283,21 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
         "lost": lost,
         "energy_spent": energy_spent,
         "energy_left": int(profile.get("energy_current") or 0),
+        "energy_max": int(profile.get("energy_max") or 0),
         "silver_before": silver_before,
         "silver_after": silver_after,
         "silver_delta": silver_after - silver_before,
         "dailies_claimed": len(claimed),
+        "dailies_lightning": dailies_lightning,
         "location": loc.get("name"),
         "note": note,
         "seconds": round(time.time() - started, 1),
     }
     log(f"[silver] готово: рейдов {raids} (побед {won}), потрачено энергии "
         f"{energy_spent}, серебро {silver_before} -> {silver_after} "
-        f"(+{result['silver_delta']}), заданий забрано {len(claimed)}, "
-        f"энергии осталось {result['energy_left']}"
+        f"(+{result['silver_delta']}), заданий забрано {len(claimed)} "
+        f"(+{dailies_lightning} молний), "
+        f"энергии осталось {result['energy_left']}/{result['energy_max']}"
         + (f", {note}" if note else ""))
     return result
 

@@ -233,6 +233,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
 
     read_done = 0
     claimed_after = False
+    dailies_claimed = 0
     errors = 0
     not_found = 0
     note = ""
@@ -305,13 +306,13 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             save_state(state)
 
             if not claimed_after and state["count"] >= 10:
-                claim_dailies(api, log=log)
+                dailies_claimed += len(claim_dailies(api, log=log))
                 claimed_after = True
 
             time.sleep(random.uniform(pause_lo, pause_hi) / 1000.0)
 
     if not claimed_after:
-        claim_dailies(api, log=log)
+        dailies_claimed += len(claim_dailies(api, log=log))
 
     if not_found:
         log(f"[lightning] не найдено тайтлов: {not_found} из {len(titles)} "
@@ -322,6 +323,8 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
         "ok": True,
         "read": read_done,
         "total_today": state["count"],
+        "max_today": max_chapters,
+        "dailies_claimed": dailies_claimed,
         "errors": errors,
         "note": note,
         "seconds": round(time.time() - started, 1),

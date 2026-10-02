@@ -32,7 +32,31 @@ The Actor is built for long unattended runs: it works with your own cookies, bac
 | `readCollectionUrl` | string | `…/collections/2197` | Collection page used to discover titles. |
 | `dungeonUiLoop` | boolean | `false` | Legacy UI click-loop (kept for debugging). |
 
-The same settings are available as environment variables for local runs: `FARM_SILVER`, `SILVER_MAX_RAIDS`, `SILVER_PAUSE_MS`, `SILVER_LOCATION`, `SILVER_BUY_LIGHTNING`, `CLAIM_DAILIES`, `FARM_LIGHTNING`, `LIGHTNING_MAX_CHAPTERS`, `LIGHTNING_SKIP_PAID`, `READ_TITLE_URLS`, `READ_COLLECTION_URL`, `FARM_DUNGEON_UI`, `REMANGA_COOKIES_RAW` / `REMANGA_COOKIES_JSON`.
+The same settings are available as environment variables for local runs: `FARM_SILVER`, `SILVER_MAX_RAIDS`, `SILVER_PAUSE_MS`, `SILVER_LOCATION`, `SILVER_BUY_LIGHTNING`, `CLAIM_DAILIES`, `FARM_LIGHTNING`, `LIGHTNING_MAX_CHAPTERS`, `LIGHTNING_SKIP_PAID`, `READ_TITLE_URLS`, `READ_COLLECTION_URL`, `FARM_DUNGEON_UI`, `REMANGA_COOKIES_RAW` / `REMANGA_COOKIES_JSON`, `TG_REPORT`.
+
+## Telegram report
+
+After every run the Actor sends a one-message progress report to Telegram:
+
+```
+📊 Remanga — итог прогона (02.10 12:34)
+🔋 энергия: 0/115
+🪙 серебро: 283 → 291 (+8)
+⚡ молнии: 400 → 600 (+200)
+📖 глав сегодня: 50/100
+🎁 дневок забрано: 3
+⏱ 4 мин 12 с
+```
+
+Requirements (already read from the environment):
+
+- `TELEGRAM_BOT_TOKEN` — bot token from @BotFather;
+- `TELEGRAM_CHAT_ID` — chat id that receives the report.
+
+Set `TG_REPORT=0` to disable the report. The message is sent even when one of
+the farms fails — unavailable fields are shown as `—` and the failure reason
+is appended (`⚠ серебро: пропущено (unauthorized)`). Screenshot notifications
+(`sendPhoto`) use the same credentials and work independently.
 
 ## Output
 

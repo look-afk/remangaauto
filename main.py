@@ -2,6 +2,7 @@ import json
 import os
 import random
 import time
+from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
@@ -156,6 +157,123 @@ def send_telegram_photo(path, caption=None):
             f"⚠️ Не удалось отправить скриншот в Telegram: {exc}"
         )
         return False
+
+
+def send_telegram_text(text):
+    """Отправка текстового отчёта в Telegram (TELEGRAM_* уже в env)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print(
+            "⚠️ Telegram не настроен: нужны "
+            "TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID."
+        )
+        return False
+
+    try:
+        url = (
+            f"https://api.telegram.org/"
+            f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        )
+
+        response = requests.post(
+            url,
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": text,
+            },
+            timeout=30,
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+        if not result.get("ok"):
+            print(
+                "⚠️ Telegram API вернул ошибку: "
+                f"{result.get('description', 'unknown error')}"
+            )
+            return False
+
+        print("📨 Отчёт отправлен в Telegram.")
+        return True
+
+    except Exception as exc:
+        print(f"⚠️ Не удалось отправить отчёт в Telegram: {exc}")
+        return False
+
+
+def _fmt_duration(seconds):
+    if seconds is None:
+        return "—"
+    seconds = max(0, int(seconds))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h} ч {m} мин"
+    if m:
+        return f"{m} мин {s} с"
+    return f"{s} с"
+
+
+def build_report(silver=None, lightning=None, li_before=None, li_after=None,
+                 started_ts=None, now_ts=None):
+    """Собирает текст отчёта о прогоне. Чистая функция — тестируется отдельно.
+
+    silver    — result из farm_silver (или None/{"ok": False, "reason": ...})
+    lightning — result из farm_lightning
+    li_before / li_after — баланс молний до и после прогона (api.lightning_balance)
+    started_ts — time.time() в начале прогона (для строки «⏱»)
+    now_ts     — время отчёта (для заголовка), по умолчанию текущее
+    """
+    ts = datetime.fromtimestamp(now_ts if now_ts is not None else time.time())
+    lines = [f"📊 Remanga — итог прогона ({ts.strftime('%d.%m %H:%M')})"]
+
+    silver = silver if isinstance(silver, dict) else {}
+    lightning = lightning if isinstance(lightning, dict) else {}
+
+    e_left = silver.get("energy_left")
+    e_max = silver.get("energy_max")
+    if e_left is not None and e_max is not None:
+        lines.append(f"🔋 энергия: {e_left}/{e_max}")
+    else:
+        lines.append("🔋 энергия: —")
+
+    if "silver_before" in silver:
+        delta = int(silver.get("silver_delta") or 0)
+        sign = "+" if delta >= 0 else ""
+        lines.append(
+            f"🪙 серебро: {silver['silver_before']} → "
+            f"{silver.get('silver_after')} ({sign}{delta})"
+        )
+    else:
+        lines.append("🪙 серебро: —")
+
+    if li_before is not None and li_after is not None:
+        delta = int(li_after) - int(li_before)
+        lines.append(f"⚡ молнии: {li_before} → {li_after} (+{delta})")
+    else:
+        lines.append("⚡ молнии: —")
+
+    if "total_today" in lightning:
+        max_today = lightning.get("max_today")
+        tail = f"/{max_today}" if max_today else ""
+        lines.append(f"📖 глав сегодня: {lightning['total_today']}{tail}")
+    else:
+        lines.append("📖 глав сегодня: —")
+
+    claimed = (int(silver.get("dailies_claimed") or 0)
+               + int(lightning.get("dailies_claimed") or 0))
+    lines.append(f"🎁 дневок забрано: {claimed}")
+
+    for name, res in (("серебро", silver), ("молнии", lightning)):
+        if res.get("ok") is False:
+            lines.append(
+                f"⚠ {name}: пропущено ({res.get('reason') or 'ошибка'})"
+            )
+
+    if started_ts:
+        lines.append(f"⏱ {_fmt_duration(time.time() - started_ts)}")
+    return "\n".join(lines)
 
 
 def safe_screenshot(page, filename, message=None):
@@ -322,6 +440,7 @@ def run_dungeon_bot(proxy_url=None):
         "[2026-09-08] "
         "Запуск задачи фарма катакомб..."
     )
+    started_ts = time.time()
 
     cookie_json_path = (
         os.getenv("REMANGA_COOKIES_JSON")
@@ -507,13 +626,23 @@ def run_dungeon_bot(proxy_url=None):
 
             # 🪙 Серебро: тратим энергию на локации через API и забираем
             # ежедневные задания. Работает без браузера — секунды вместо минут.
+            silver_res = None
+            li_res = None
+            try:
+                li_before = (
+                    api.lightning_balance() if api is not None else None
+                )
+            except Exception:
+                li_before = None
+
             if os.getenv("FARM_SILVER", "1") == "1":
                 try:
                     from my_actor.silver_farm import farm_silver
 
-                    farm_silver(api=api)
+                    silver_res = farm_silver(api=api)
                 except Exception as exc:
                     print(f"⚠️ Ошибка фарма серебра: {exc}")
+                    silver_res = {"ok": False, "reason": str(exc)[:120]}
 
             # ⚡ Молнии: используем отдельный актуальный фармер,
             # не меняя рабочую инициализацию браузера/прокси.
@@ -521,10 +650,11 @@ def run_dungeon_bot(proxy_url=None):
                 try:
                     from my_actor.lightning_farm import farm_lightning
 
-                    farm_lightning(page, session=session, api=api)
+                    li_res = farm_lightning(page, session=session, api=api)
                     page = session.get()
                 except Exception as exc:
                     print(f"⚠️ Ошибка фарма молний: {exc}")
+                    li_res = {"ok": False, "reason": str(exc)[:120]}
                     page = session.get()
 
                 # Возвращаемся на карту перед основной фармой.
@@ -540,6 +670,24 @@ def run_dungeon_bot(proxy_url=None):
                     )
                 except Exception:
                     page.wait_for_timeout(5000)
+
+            # 📨 Отчёт в Telegram: энергия, серебро, молнии, главы, дневки.
+            if os.getenv("TG_REPORT", "1") == "1":
+                try:
+                    li_after = (
+                        api.lightning_balance() if api is not None else None
+                    )
+                except Exception:
+                    li_after = None
+                try:
+                    send_telegram_text(
+                        build_report(
+                            silver_res, li_res,
+                            li_before, li_after, started_ts,
+                        )
+                    )
+                except Exception as exc:
+                    print(f"⚠️ Не удалось отправить TG-отчёт: {exc}")
 
             run_count = 0
 
