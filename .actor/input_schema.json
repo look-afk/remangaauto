@@ -43,12 +43,14 @@
             "items": {
                 "type": "string"
             },
+            "editor": "stringList",
             "default": []
         },
         "readCollectionUrl": {
             "title": "Коллекция для сбора тайтлов",
             "description": "Страница коллекции remanga.org, из которой браузер собирает тайтлы, если список readTitleUrls пуст.",
             "type": "string",
+            "editor": "textfield",
             "default": "https://remanga.org/collections/2197"
         },
         "dungeonUiLoop": {
