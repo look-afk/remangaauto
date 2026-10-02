@@ -192,6 +192,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
         log("[lightning] куки не найдены — фарм пропущен")
         return {"ok": False, "reason": "no_cookies"}
 
+    auth_ok, auth_detail = api.authorized()
+    if not auth_ok:
+        log(f"[lightning] API не авторизован ({auth_detail}) — фарм пропущен")
+        return {"ok": False, "reason": "unauthorized", "detail": auth_detail}
+
     state = load_state()
     if state["count"] >= max_chapters:
         log(f"[lightning] дневной лимит уже достигнут: {state['count']}")
@@ -229,6 +234,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     read_done = 0
     claimed_after = False
     errors = 0
+    not_found = 0
     note = ""
 
     for title_url in titles:
@@ -247,7 +253,10 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             errors += 1
             continue
         if not info:
-            log(f"[lightning] тайтл не найден: {slug}")
+            not_found += 1
+            # не заливаем лог: первые 3 поимённо, дальше каждые 25-й
+            if not_found <= 3 or not_found % 25 == 0:
+                log(f"[lightning] тайтл не найден: {slug}")
             continue
         if not todo:
             continue
@@ -303,6 +312,10 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
 
     if not claimed_after:
         claim_dailies(api, log=log)
+
+    if not_found:
+        log(f"[lightning] не найдено тайтлов: {not_found} из {len(titles)} "
+            f"(проверь API/куки — подробности выше)")
 
     save_state(state)
     result = {

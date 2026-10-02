@@ -178,6 +178,11 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
         log("[silver] куки не найдены — фарм серебра пропущен")
         return {"ok": False, "reason": "no_cookies"}
 
+    auth_ok, auth_detail = api.authorized()
+    if not auth_ok:
+        log(f"[silver] API не авторизован ({auth_detail}) — фарм серебра пропущен")
+        return {"ok": False, "reason": "unauthorized", "detail": auth_detail}
+
     max_raids = overrides.get("max_raids", _env_int("SILVER_MAX_RAIDS", 0))
     forced = overrides.get("location_id", _env_int("SILVER_LOCATION", 0)) or None
     safe_only = overrides.get("safe_only", _env_bool("SILVER_SAFE_ONLY", True))

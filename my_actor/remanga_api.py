@@ -133,12 +133,73 @@ def pick_token(cookies: list[dict]) -> str | None:
     return None
 
 
+# ------------------------------------------------------------------ прокси
+
+def proxy_from_env(log=_log) -> dict | None:
+    """Прокси для requests из PROXY_URL / CUSTOM_PROXY / *_PROXY.
+
+    Возвращает {"http": url, "https": url} либо None (идём напрямую).
+    Схема определяется автоматически; socks5 требует PySocks (requests[socks]).
+    """
+    raw = ""
+    for name in ("PROXY_URL", "CUSTOM_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+        v = (os.getenv(name) or "").strip()
+        if v:
+            raw = v
+            break
+    if not raw:
+        return None
+    if "://" not in raw:
+        raw = "http://" + raw
+    scheme = raw.split("://", 1)[0].lower()
+    if scheme.startswith("socks"):
+        try:
+            import socks  # noqa: F401  — PySocks
+        except ImportError:
+            log("[api] SOCKS-прокси требует PySocks (requests[socks]) — прокси "
+                "пропущен, запросы пойдут напрямую либо через браузерный контекст")
+            return None
+    return {"http": raw, "https": raw}
+
+
 # ------------------------------------------------------------------ клиент
 
-class RemangaApi:
-    """Сессия API с ретраями. Все методы возвращают (code, data)."""
+class _CtxResponse:
+    """Мини-адаптер ответа Playwright APIRequestContext под интерфейс requests."""
 
-    def __init__(self, cookies: list[dict], log=_log, retries: int = 3):
+    def __init__(self, status, text: str):
+        self.status_code = int(status)
+        self.text = text or ""
+
+    def json(self):
+        return json.loads(self.text)
+
+
+class RemangaApi:
+    """Сессия API с ретраями. Все методы возвращают (code, data).
+
+    Если прямой запрос отклонён (401/403) или не проходит вовсе (0),
+    запрос повторяется через Playwright-контекст браузера — тот же прокси,
+    те же куки и тот же отпечаток TLS, что и у страницы.
+    """
+
+    # статусы, при которых пробуем повтор через браузерный контекст
+    FALLBACK_CODES = (0, 401, 403)
+
+    # -- низкоуровневое
+    @staticmethod
+    def _url(path: str) -> str:
+        return path if path.startswith("http") else f"{API}{path}"
+
+    @staticmethod
+    def _safe_json(r):
+        try:
+            return r.json()
+        except Exception:
+            return {"_text": (r.text or "")[:300]}
+
+    def __init__(self, cookies: list[dict], log=_log, retries: int = 3,
+                 proxy=None, env_proxy: bool = True):
         self.log = log
         self.retries = max(1, int(retries))
         self.s = requests.Session()
@@ -149,6 +210,11 @@ class RemangaApi:
             "Referer": f"{SITE}/",
             "Origin": SITE,
         })
+        if proxy is None and env_proxy:
+            proxy = proxy_from_env(log=log)
+        self.proxy = proxy if isinstance(proxy, dict) and proxy else None
+        if self.proxy:
+            self.s.proxies.update(self.proxy)
         for c in cookies:
             domain = c.get("domain") or ""
             if "remanga" not in domain:
@@ -164,22 +230,52 @@ class RemangaApi:
         if self.token:
             self.s.headers["Authorization"] = f"Bearer {self.token}"
         self.token_is_set = bool(self.token)
+        self._ctx = None
+        self._warned: set = set()
+        self.last_status = 0
 
-    # -- низкоуровневое
-    @staticmethod
-    def _url(path: str) -> str:
-        return path if path.startswith("http") else f"{API}{path}"
+    def bind_context(self, context) -> None:
+        """Привязываем Playwright-контекст: повторы пойдут через браузерный прокси."""
+        self._ctx = context
 
-    @staticmethod
-    def _safe_json(r):
-        try:
-            return r.json()
-        except Exception:
-            return {"_text": (r.text or "")[:300]}
+    def _warn_once(self, key, message: str) -> None:
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        self.log(message)
 
-    def request(self, method: str, path: str, body: dict | None = None, **params):
-        url = self._url(path)
-        last = (0, None)
+    def _warn_denied(self, method: str, path: str, code: int) -> None:
+        prefix = "/".join(path.split("?")[0].split("/")[:5])
+        proxy_note = "прокси задан" if self.proxy else "прокси НЕ задан"
+        self._warn_once(
+            (code, prefix),
+            f"[api] HTTP {code} {method} {prefix} — отклонено "
+            f"({proxy_note}). Проверь прокси (PROXY_URL) и куки.",
+        )
+
+    def _fetch_via_context(self, method: str, url: str, body, params):
+        """Повтор запроса через Playwright (прокси/куки/фингерпринт браузера)."""
+        headers = {
+            "User-Agent": UA,
+            "Accept": "application/json, text/plain, */*",
+            "Referer": f"{SITE}/",
+            "Origin": SITE,
+        }
+        kwargs = {
+            "method": method.upper(),
+            "headers": headers,
+            "timeout": 30000,
+            "fail_on_status_code": False,
+        }
+        if body is not None:
+            kwargs["json"] = body
+        if params:
+            kwargs["params"] = {k: str(v) for k, v in params.items()}
+        r = self._ctx.fetch(url, **kwargs)
+        return _CtxResponse(r.status, r.text())
+
+    def _request_direct(self, method: str, url: str, body, params):
+        last = (0, {"_error": "нет ответа"})
         for attempt in range(self.retries):
             try:
                 r = self.s.request(
@@ -191,15 +287,50 @@ class RemangaApi:
                 time.sleep(1.0 + attempt + random.random())
                 continue
 
-            if r.status_code in (429,) or 500 <= r.status_code < 600:
+            if r.status_code == 429 or 500 <= r.status_code < 600:
                 last = (r.status_code, self._safe_json(r))
                 time.sleep(1.5 * (attempt + 1) + random.random())
                 continue
 
-            if r.status_code == 401:
-                return 401, None
             return r.status_code, self._safe_json(r)
         return last
+
+    def request(self, method: str, path: str, body: dict | None = None, **params):
+        url = self._url(path)
+        method = method.upper()
+        code, data = self._request_direct(method, url, body, params)
+
+        if code in self.FALLBACK_CODES:
+            if self._ctx is not None:
+                self._warn_once(
+                    (method, "via-ctx"),
+                    f"[api] {method} {path} -> HTTP {code}: повторяю через "
+                    f"браузерный контекст (прокси страницы)…",
+                )
+                try:
+                    r = self._fetch_via_context(method, url, body, params)
+                    code, data = r.status_code, self._safe_json(r)
+                except Exception as exc:
+                    self._warn_once(
+                        ("ctx-error",),
+                        f"[api] повтор через браузерный контекст не удался: {exc}",
+                    )
+            else:
+                detail = ""
+                if isinstance(data, dict):
+                    detail = str(data.get("_error") or "")[:160]
+                self._warn_once(
+                    ("direct", code),
+                    f"[api] {method} {path} -> HTTP {code} {detail} — "
+                    f"прямой запрос не проходит, браузерный контекст не привязан.",
+                )
+
+        self.last_status = code
+        if code in (401, 403):
+            self._warn_denied(method, path, code)
+        if code == 401:
+            return 401, data
+        return code, data
 
     def get(self, path: str, **params):
         return self.request("GET", path, None, **params)
@@ -216,6 +347,21 @@ class RemangaApi:
         if not isinstance(user, dict) or not user.get("id"):
             return None
         return user
+
+    def authorized(self) -> tuple[bool, str]:
+        """Есть ли доступ к API. (True, username) либо (False, 'HTTP …')."""
+        code, data = self.get("/api/users/current/")
+        if code == 200:
+            user = data.get("content") if isinstance(data, dict) and \
+                isinstance(data.get("content"), dict) else data
+            if isinstance(user, dict) and user.get("id"):
+                return True, str(user.get("username") or user.get("id"))
+            return False, "HTTP 200, но пользователь не вернулся"
+        detail = ""
+        if isinstance(data, dict):
+            detail = str(data.get("detail") or data.get("_error")
+                         or data.get("_text") or "")[:160]
+        return False, f"HTTP {code} {detail}".strip()
 
     # -- балансы события (серебро = event points)
     def event_points(self) -> int:

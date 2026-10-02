@@ -446,6 +446,15 @@ def run_dungeon_bot(proxy_url=None):
             cookies=cookies,
         )
 
+        # Один API-клиент на прогон. Привязываем браузерный контекст:
+        # при отказе прямого запроса (401/403/нет соединения) повтор пойдёт
+        # через тот же прокси и куки, что и страница.
+        from my_actor.remanga_api import api_from_env
+
+        api = api_from_env()
+        if api is not None:
+            api.bind_context(context)
+
         try:
             print(
                 "🔗 Переход на "
@@ -502,7 +511,7 @@ def run_dungeon_bot(proxy_url=None):
                 try:
                     from my_actor.silver_farm import farm_silver
 
-                    farm_silver()
+                    farm_silver(api=api)
                 except Exception as exc:
                     print(f"⚠️ Ошибка фарма серебра: {exc}")
 
@@ -512,7 +521,7 @@ def run_dungeon_bot(proxy_url=None):
                 try:
                     from my_actor.lightning_farm import farm_lightning
 
-                    farm_lightning(page, session=session)
+                    farm_lightning(page, session=session, api=api)
                     page = session.get()
                 except Exception as exc:
                     print(f"⚠️ Ошибка фарма молний: {exc}")
