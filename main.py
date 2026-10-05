@@ -81,6 +81,32 @@ def load_cookies(file_path):
     return parse_netscape_cookies(file_path)
 
 
+def parse_raw_cookie_header(raw, domain=".remanga.org", path="/"):
+    cookies = []
+
+    for chunk in (raw or "").split(";"):
+        pair = chunk.strip()
+
+        if "=" not in pair:
+            continue
+
+        name, value = pair.split("=", 1)
+        name = name.strip()
+
+        if not name:
+            continue
+
+        cookies.append({
+            "domain": domain,
+            "path": path,
+            "name": name,
+            "value": value.strip(),
+            "secure": True,
+        })
+
+    return cookies
+
+
 def parse_proxy(proxy_url):
     if not proxy_url:
         return None
@@ -454,7 +480,20 @@ def run_dungeon_bot(proxy_url=None):
 
     cookies = []
 
-    if os.path.exists(cookie_json_path):
+    raw_cookies = os.getenv("REMANGA_COOKIES_RAW")
+
+    if raw_cookies:
+        cookies = parse_raw_cookie_header(raw_cookies)
+
+        print(
+            f"🍪 Куки из REMANGA_COOKIES_RAW: "
+            f"{len(cookies)}"
+        )
+
+    if (
+        not cookies
+        and os.path.exists(cookie_json_path)
+    ):
         try:
             cookies = load_cookies(
                 cookie_json_path
