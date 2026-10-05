@@ -231,8 +231,12 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     except ValueError:
         pause_lo = pause_hi = int(pause_raw) if pause_raw.isdigit() else 800
 
-    comment_text = (os.getenv("CHAPTER_COMMENT") or "").strip()
-    comment_once = _env_bool("CHAPTER_COMMENT_ONCE", True)
+    comment_raw = os.getenv("CHAPTER_COMMENT") or ""
+    comment_texts = [t.strip() for t in comment_raw.replace("\\n", "\n").split("|")
+                     if t.strip()]
+    comment_once = _env_bool("CHAPTER_COMMENT_ONCE", False)
+    comment_burst = max(1, _env_int("CHAPTER_COMMENT_BURST", 1))
+    comment_pause = _env_int("CHAPTER_COMMENT_BURST_PAUSE_MIN", 0) * 60
 
     read_done = 0
     commented = 0
@@ -309,14 +313,20 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             read_done += 1
             save_state(state)
 
-            if comment_text and (not comment_once or commented < 1):
+            if comment_texts and (not comment_once or commented < 1):
+                text = comment_texts[commented % len(comment_texts)]
                 try:
-                    sent, detail = api.comment_chapter(cid, comment_text)
+                    sent, detail = api.comment_chapter(cid, text)
                     commented += 1
                     state.setdefault("comments", []).append(cid)
                     save_state(state)
-                    log(f"[lightning]   💬 комментарий к главе {cid}: "
-                        f"{'отправлен' if sent else 'не отправлен — ' + detail}")
+                    log(f"[lightning]   💬 комментарий {commented} к главе "
+                        f"{cid}: {'отправлен' if sent else 'не отправлен — ' + detail}")
+                    if (comment_burst > 1 and comment_pause
+                            and commented % comment_burst == 0):
+                        log(f"[lightning]   ⏸ пауза {comment_pause // 60} мин "
+                            f"после пачки из {comment_burst} комментариев")
+                        time.sleep(comment_pause)
                 except Exception as exc:
                     log(f"[lightning]   💬 комментарий к главе {cid} "
                         f"не удался: {exc}")
