@@ -499,11 +499,27 @@ def run_dungeon_bot(proxy_url=None):
             "--disable-blink-features=AutomationControlled"
         ]
 
-        proxy = parse_proxy(
+        # Прокси: явный аргумент/env > бесплатный прокси стран СНГ > напрямую.
+        proxy_url = (
             proxy_url
             or os.getenv("CUSTOM_PROXY")
             or os.getenv("PROXY_URL")
         )
+
+        if not proxy_url and os.getenv("USE_FREE_PROXY", "1") == "1":
+            # Результат кладём в PROXY_URL — его подхватит и Playwright
+            # (ниже), и requests (remanga_api.proxy_from_env).
+            try:
+                from my_actor.free_proxies import find_working_proxy
+
+                proxy_url = find_working_proxy()
+            except Exception as exc:
+                print(f"⚠️ Не удалось подобрать бесплатный прокси: {exc}")
+
+            if proxy_url:
+                os.environ["PROXY_URL"] = proxy_url
+
+        proxy = parse_proxy(proxy_url)
 
         if proxy:
             print(

@@ -15,11 +15,20 @@ def set_logger(fn) -> None:
     _impl = fn
 
 
+def _safe_print(msg) -> None:
+    """Печать, устойчивая к консолям без UTF-8 (Windows cp1251 и т.п.)."""
+    try:
+        print(msg, flush=True)
+    except UnicodeEncodeError:
+        safe = str(msg).encode("ascii", "replace").decode("ascii")
+        print(safe, flush=True)
+
+
 def log(msg) -> None:
     if _impl is None:
-        print(msg, flush=True)
+        _safe_print(msg)
         return
     try:
         _impl(msg)
     except Exception:
-        print(msg, flush=True)
+        _safe_print(msg)

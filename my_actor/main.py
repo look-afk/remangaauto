@@ -36,6 +36,7 @@ _BOOL_INPUT = {
     "farmSilver": "FARM_SILVER",
     "farmLightning": "FARM_LIGHTNING",
     "dungeonUiLoop": "FARM_DUNGEON_UI",
+    "useFreeProxy": "USE_FREE_PROXY",
 }
 _INT_INPUT = {
     "silverMaxRaids": "SILVER_MAX_RAIDS",
@@ -44,6 +45,7 @@ _INT_INPUT = {
 _STR_INPUT = {
     "readCollectionUrl": "READ_COLLECTION_URL",
     "proxyUrl": "PROXY_URL",
+    "proxyCountries": "PROXY_COUNTRIES",
 }
 
 

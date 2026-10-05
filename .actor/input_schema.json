@@ -58,6 +58,26 @@
             "description": "Клики по карте вместо API. Медленно; оставлено для отладки.",
             "type": "boolean",
             "default": false
+        },
+        "proxyUrl": {
+            "title": "Свой прокси",
+            "description": "Прокси вида scheme://ip:порт (http, socks4, socks5). Если задан — используется вместо бесплатного.",
+            "type": "string",
+            "editor": "textfield",
+            "default": ""
+        },
+        "useFreeProxy": {
+            "title": "Бесплатный прокси стран СНГ",
+            "description": "Автоматически подбирает живой бесплатный прокси из открытого списка (RU, KZ, BY, UZ и т.д.) и идёт через него к remanga.org. Если живых нет — пойдёт напрямую.",
+            "type": "boolean",
+            "default": true
+        },
+        "proxyCountries": {
+            "title": "Страны прокси (коды ISO)",
+            "description": "Коды стран через запятую для подбора бесплатного прокси.",
+            "type": "string",
+            "editor": "textfield",
+            "default": "RU,KZ,BY,UZ,AM,GE,AZ,MD,UA,TJ,KG"
         }
     },
     "required": []
