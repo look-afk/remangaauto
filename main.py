@@ -241,13 +241,79 @@ def _fmt_duration(seconds):
     return f"{s} с"
 
 
+def parse_comment_jobs(raw):
+    """Список комментариев из env.
+
+    POST_COMMENTS         — «id:текст| id2:текст2» (разные тексты)
+    CHAPTER_COMMENT_IDS   — список id через запятую, текст берётся из
+                            CHAPTER_COMMENT (один текст на все главы)
+    """
+    jobs = []
+    shared_text = (os.getenv("CHAPTER_COMMENT") or "").strip()
+    ids = os.getenv("CHAPTER_COMMENT_IDS") or ""
+
+    for chunk in ids.replace(";", ",").split(","):
+        cid = chunk.strip()
+
+        if cid.isdigit() and shared_text:
+            jobs.append({
+                "chapter": int(cid),
+                "text": shared_text,
+            })
+
+    for chunk in (raw or "").split("|"):
+        if ":" not in chunk:
+            continue
+
+        cid, _, body = chunk.partition(":")
+        cid = cid.strip()
+        body = body.strip()
+
+        if cid.isdigit() and body:
+            jobs.append({
+                "chapter": int(cid),
+                "text": body,
+            })
+
+    return jobs
+
+
+def post_comments(api, jobs, pause_s=0):
+    """Отправляет комментарии к главам. Возвращает список результатов."""
+    results = []
+
+    for job in jobs:
+        try:
+            ok, detail = api.comment_chapter(job["chapter"], job["text"])
+
+        except Exception as exc:
+            ok, detail = False, str(exc)[:120]
+
+        results.append({
+            "chapter": job["chapter"],
+            "ok": ok,
+            "detail": detail,
+        })
+
+        print(
+            f"💬 глава {job['chapter']}: "
+            f"{'комментарий отправлен' if ok else 'не отправлен — ' + detail}"
+        )
+
+        if pause_s > 0 and len(results) < len(jobs):
+            time.sleep(pause_s)
+
+    return results
+
+
 def build_report(silver=None, lightning=None, li_before=None, li_after=None,
-                 started_ts=None, now_ts=None):
+                 started_ts=None, now_ts=None, comments=None):
     """Собирает текст отчёта о прогоне. Чистая функция — тестируется отдельно.
 
     silver    — result из farm_silver (или None/{"ok": False, "reason": ...})
     lightning — result из farm_lightning
     li_before / li_after — баланс молний до и после прогона (api.lightning_balance)
+    comments   — список результатов из post_comments
     started_ts — time.time() в начале прогона (для строки «⏱»)
     now_ts     — время отчёта (для заголовка), по умолчанию текущее
     """
@@ -289,6 +355,19 @@ def build_report(silver=None, lightning=None, li_before=None, li_after=None,
 
     if int(lightning.get("comments") or 0) > 0:
         lines.append(f"💬 комментариев: {lightning['comments']}")
+
+    if comments:
+        sent = sum(1 for c in comments if c.get("ok"))
+
+        if sent:
+            lines.append(f"💬 отдельно отправлено: {sent}/{len(comments)}")
+
+        for item in comments:
+            if not item.get("ok"):
+                lines.append(
+                    f"⚠ комментарий к главе {item['chapter']}: "
+                    f"{item.get('detail') or 'ошибка'}"
+                )
 
     claimed = (int(silver.get("dailies_claimed") or 0)
                + int(lightning.get("dailies_claimed") or 0))
@@ -678,6 +757,48 @@ def run_dungeon_bot(proxy_url=None):
                     "авторизацию по cookies."
                 )
 
+            # 💬 Комментарии отдельно от чтения глав:
+            # POST_COMMENTS = "id:текст|id2:текст2", пауза POST_COMMENTS_PAUSE_S.
+            comment_jobs = parse_comment_jobs(
+                os.getenv("POST_COMMENTS")
+            )
+            comments_res = []
+
+            if comment_jobs:
+                if api is None:
+                    print(
+                        "⚠️ Комментарии пропущены: "
+                        "нет API-клиента (куки)."
+                    )
+
+                else:
+                    pause_s = int(
+                        os.getenv("POST_COMMENTS_PAUSE_S", "0") or 0
+                    )
+                    print(
+                        f"💬 Отправляю {len(comment_jobs)} "
+                        f"комментариев (пауза {pause_s} с)."
+                    )
+                    try:
+                        comments_res = post_comments(
+                            api, comment_jobs, pause_s
+                        )
+
+                    except Exception as exc:
+                        print(
+                            "⚠️ Ошибка отправки "
+                            f"комментариев: {exc}"
+                        )
+
+                        comments_res = [
+                            {
+                                "chapter": job["chapter"],
+                                "ok": False,
+                                "detail": str(exc)[:120],
+                            }
+                            for job in comment_jobs
+                        ]
+
             # 🪙 Серебро: тратим энергию на локации через API и забираем
             # ежедневные задания. Работает без браузера — секунды вместо минут.
             silver_res = None
@@ -738,6 +859,7 @@ def run_dungeon_bot(proxy_url=None):
                         build_report(
                             silver_res, li_res,
                             li_before, li_after, started_ts,
+                            comments=comments_res,
                         )
                     )
                 except Exception as exc:
