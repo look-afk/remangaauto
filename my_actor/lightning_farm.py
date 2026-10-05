@@ -231,7 +231,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     except ValueError:
         pause_lo = pause_hi = int(pause_raw) if pause_raw.isdigit() else 800
 
+    comment_text = (os.getenv("CHAPTER_COMMENT") or "").strip()
+    comment_once = _env_bool("CHAPTER_COMMENT_ONCE", True)
+
     read_done = 0
+    commented = 0
     claimed_after = False
     dailies_claimed = 0
     errors = 0
@@ -305,6 +309,18 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             read_done += 1
             save_state(state)
 
+            if comment_text and (not comment_once or commented < 1):
+                try:
+                    sent, detail = api.comment_chapter(cid, comment_text)
+                    commented += 1
+                    state.setdefault("comments", []).append(cid)
+                    save_state(state)
+                    log(f"[lightning]   💬 комментарий к главе {cid}: "
+                        f"{'отправлен' if sent else 'не отправлен — ' + detail}")
+                except Exception as exc:
+                    log(f"[lightning]   💬 комментарий к главе {cid} "
+                        f"не удался: {exc}")
+
             if not claimed_after and state["count"] >= 10:
                 dailies_claimed += len(claim_dailies(api, log=log))
                 claimed_after = True
@@ -322,6 +338,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     result = {
         "ok": True,
         "read": read_done,
+        "comments": commented,
         "total_today": state["count"],
         "max_today": max_chapters,
         "dailies_claimed": dailies_claimed,

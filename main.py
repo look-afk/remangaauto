@@ -287,6 +287,9 @@ def build_report(silver=None, lightning=None, li_before=None, li_after=None,
     else:
         lines.append("📖 глав сегодня: —")
 
+    if int(lightning.get("comments") or 0) > 0:
+        lines.append(f"💬 комментариев: {lightning['comments']}")
+
     claimed = (int(silver.get("dailies_claimed") or 0)
                + int(lightning.get("dailies_claimed") or 0))
     lines.append(f"🎁 дневок забрано: {claimed}")
