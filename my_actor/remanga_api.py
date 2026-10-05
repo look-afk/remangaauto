@@ -261,6 +261,10 @@ class RemangaApi:
             "Referer": f"{SITE}/",
             "Origin": SITE,
         }
+        if params:
+            url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(
+                {k: str(v) for k, v in params.items()}
+            )
         kwargs = {
             "method": method.upper(),
             "headers": headers,
@@ -268,10 +272,9 @@ class RemangaApi:
             "fail_on_status_code": False,
         }
         if body is not None:
-            kwargs["json"] = body
-        if params:
-            kwargs["params"] = {k: str(v) for k, v in params.items()}
-        r = self._ctx.fetch(url, **kwargs)
+            # dict у Playwright сериализуется в JSON (как json= у requests).
+            kwargs["data"] = body
+        r = self._ctx.request.fetch(url, **kwargs)
         return _CtxResponse(r.status, r.text())
 
     def _request_direct(self, method: str, url: str, body, params):

@@ -32,7 +32,7 @@ The Actor is built for long unattended runs: it works with your own cookies, bac
 | `readCollectionUrl` | string | `…/collections/2197` | Collection page used to discover titles. |
 | `dungeonUiLoop` | boolean | `false` | Legacy UI click-loop (kept for debugging). |
 | `proxyUrl` | string | — | Own proxy `scheme://host:port` (http/socks4/socks5). Overrides the free proxy. |
-| `useFreeProxy` | boolean | `true` | Auto-picks a live **free proxy in CIS countries** (RU, KZ, BY, UZ, …) from an open daily-updated list and routes the browser + API through it. Falls back to a direct connection if nothing is alive. |
+| `useFreeProxy` | boolean | `true` | Auto-picks a live **free proxy in CIS countries** (RU, KZ, BY, UZ, …) from an open daily-updated list and routes the browser + API through it. A proxy is accepted only if it actually opens remanga.org (HTTP 2xx, no DDoS-Guard block); otherwise falls back to a direct connection. |
 | `proxyCountries` | string | `RU,KZ,BY,UZ,…` | Comma-separated ISO country codes used to pick the free proxy. |
 
 The same settings are available as environment variables for local runs: `FARM_SILVER`, `SILVER_MAX_RAIDS`, `SILVER_PAUSE_MS`, `SILVER_LOCATION`, `SILVER_BUY_LIGHTNING`, `CLAIM_DAILIES`, `FARM_LIGHTNING`, `LIGHTNING_MAX_CHAPTERS`, `LIGHTNING_SKIP_PAID`, `READ_TITLE_URLS`, `READ_COLLECTION_URL`, `FARM_DUNGEON_UI`, `REMANGA_COOKIES_RAW` / `REMANGA_COOKIES_JSON`, `TG_REPORT`, `USE_FREE_PROXY`, `PROXY_COUNTRIES`, `PROXY_URL` / `CUSTOM_PROXY`.

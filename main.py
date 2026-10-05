@@ -592,6 +592,17 @@ def run_dungeon_bot(proxy_url=None):
                 f"{response.status if response else 'unknown'}"
             )
 
+            if response and response.status in (401, 403, 429):
+                route = (
+                    f"через прокси {proxy_url}" if proxy_url
+                    else "напрямую (IP без прокси)"
+                )
+                print(
+                    "⚠️ Сайт закрыт DDoS-Guard/антиботом ("
+                    f"{response.status}) {route}. "
+                    "Если повторяется — задай свой прокси в поле proxyUrl."
+                )
+
             print(
                 "⏳ Ожидаю интерфейс..."
             )

@@ -5,9 +5,9 @@
 параллельно запросом к remanga.org, возвращается первый живой
 прокси в формате scheme://ip:port.
 
-Проверка живости: любой HTTP-ответ (200/403/404) означает, что
-прокси пропускает трафик до сайта; отказ соединения/таймаут —
-прокси мёртв.
+Проверка живости: ответ 2xx/3xx без страницы DDoS-Guard —
+прокси реально открывает сайт; 403/404/5xx, DDoS-Guard-
+challenge, отказ соединения или таймаут — прокси отбракован.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ LIST_URL = (
 # По умолчанию — все страны СНГ.
 DEFAULT_COUNTRIES = "RU,KZ,BY,UZ,AM,GE,AZ,MD,UA,TJ,KG"
 
-# Любая HTTP-статистика от remanga.org доказывает, что прокси доходит до сайта.
+# remanga.org должен открываться (2xx/3xx); 403 от DDoS-Guard не считается живым.
 CHECK_URL = "https://remanga.org/"
 
 # Схемы, которые понимают и requests (с requests[socks]), и Playwright.
@@ -75,22 +75,25 @@ def fetch_candidates(countries: str | None = None, limit: int = 100) -> list[str
 
 
 def is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
-    """Проверяет, доходит ли прокси до remanga.org (любой HTTP-ответ = жив)."""
+    """True, если remanga.org реально открывается через прокси (2xx/3xx, без DDoS-Guard)."""
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
         return False
     if "://" not in proxy_url:
         proxy_url = "http://" + proxy_url
     try:
-        requests.get(
+        response = requests.get(
             CHECK_URL,
             proxies={"http": proxy_url, "https": proxy_url},
             timeout=timeout,
             headers={"User-Agent": _UA},
         )
-        return True
     except requests.exceptions.RequestException:
         return False
+    if response.status_code >= 400:
+        return False
+    head = response.content[:4000].lower()
+    return b"ddos-guard" not in head and b"ddos_guard" not in head
 
 
 # Совместимость со старым именем.
@@ -127,12 +130,18 @@ def find_working_proxy(countries: str | None = None) -> str | None:
                     alive = future.result()
                 except Exception:
                     alive = False
-                if alive:
-                    proxy_url = futures[future]
-                    # Отменяем ещё не начатые проверки — ответ уже найден.
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    log(f"[proxy] ✅ Рабочий прокси: {proxy_url}")
-                    return proxy_url
+                if not alive:
+                    continue
+                proxy_url = futures[future]
+                # Перепроверка: бесплатные прокси умирают за секунды,
+                # подтверждаем кандидата сразу после нахождения.
+                if not _is_alive(proxy_url, timeout=8.0):
+                    log(f"[proxy] Кандидат отвалился при перепроверке: {proxy_url}")
+                    continue
+                # Отменяем ещё не начатые проверки — ответ уже найден.
+                pool.shutdown(wait=False, cancel_futures=True)
+                log(f"[proxy] ✅ Рабочий прокси: {proxy_url}")
+                return proxy_url
     except Exception as exc:
         log(f"[proxy] Ошибка при проверке прокси: {exc}")
         return None
