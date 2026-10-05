@@ -74,7 +74,13 @@ def fetch_candidates(countries: str | None = None, limit: int = 100) -> list[str
     return found[:limit]
 
 
-def _is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
+def is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
+    """Проверяет, доходит ли прокси до remanga.org (любой HTTP-ответ = жив)."""
+    proxy_url = (proxy_url or "").strip()
+    if not proxy_url:
+        return False
+    if "://" not in proxy_url:
+        proxy_url = "http://" + proxy_url
     try:
         requests.get(
             CHECK_URL,
@@ -85,6 +91,10 @@ def _is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
         return True
     except requests.exceptions.RequestException:
         return False
+
+
+# Совместимость со старым именем.
+_is_alive = is_alive
 
 
 def find_working_proxy(countries: str | None = None) -> str | None:
@@ -129,3 +139,47 @@ def find_working_proxy(countries: str | None = None) -> str | None:
 
     log("[proxy] Живых прокси не нашлось — пойдём напрямую.")
     return None
+
+
+def resolve_proxy(explicit: str | None = None) -> str | None:
+    """Выбирает прокси: сначала проверяет прокси из env, потом бесплатный СНГ.
+
+    - прокси из env (explicit / CUSTOM_PROXY / PROXY_URL) жив -> используем его;
+    - мёртвый -> убираем его из env и подбираем бесплатный (USE_FREE_PROXY);
+    - бесплатный не нужен или не найден -> None (прямое подключение).
+
+    Никогда не бросает исключений — при сбоях возвращает None или env-прокси.
+    """
+    try:
+        env_proxy = (
+            (explicit or "").strip()
+            or (os.getenv("CUSTOM_PROXY") or "").strip()
+            or (os.getenv("PROXY_URL") or "").strip()
+        )
+
+        if env_proxy:
+            log(f"[proxy] Прокси из env: проверяю ({env_proxy})...")
+            if is_alive(env_proxy):
+                log("[proxy] Прокси из env работает — используем его.")
+                if "://" not in env_proxy:
+                    env_proxy = "http://" + env_proxy
+                return env_proxy
+            log("[proxy] Прокси из env НЕ работает — убираю его.")
+            # Чистим env, чтобы requests (remanga_api) не шёл через мёртвый прокси.
+            os.environ.pop("PROXY_URL", None)
+            os.environ.pop("CUSTOM_PROXY", None)
+
+        if os.getenv("USE_FREE_PROXY", "1") == "1":
+            free = find_working_proxy()
+            if free:
+                # PROXY_URL имеет приоритет в proxy_from_env — requests пойдёт
+                # через этот прокси, а не через (удалённый) env.
+                os.environ["PROXY_URL"] = free
+                return free
+
+        log("[proxy] Рабочего прокси нет — прямое подключение.")
+        return None
+
+    except Exception as exc:
+        log(f"[proxy] Ошибка выбора прокси: {exc}")
+        return None
