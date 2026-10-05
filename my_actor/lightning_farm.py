@@ -235,8 +235,10 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     comment_texts = [t.strip() for t in comment_raw.replace("\\n", "\n").split("|")
                      if t.strip()]
     comment_once = _env_bool("CHAPTER_COMMENT_ONCE", False)
-    comment_burst = max(1, _env_int("CHAPTER_COMMENT_BURST", 1))
-    comment_pause = _env_int("CHAPTER_COMMENT_BURST_PAUSE_MIN", 0) * 60
+    comment_burst = max(1, _env_int("CHAPTER_COMMENT_BURST", 4))
+    comment_pause = _env_int("CHAPTER_COMMENT_BURST_PAUSE_MIN", 3) * 60
+    comment_gap_lo = _env_int("CHAPTER_COMMENT_GAP_MIN_S", 20)
+    comment_gap_hi = _env_int("CHAPTER_COMMENT_GAP_MAX_S", 30)
 
     read_done = 0
     commented = 0
@@ -327,6 +329,12 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                         log(f"[lightning]   ⏸ пауза {comment_pause // 60} мин "
                             f"после пачки из {comment_burst} комментариев")
                         time.sleep(comment_pause)
+                    else:
+                        gap = random.uniform(comment_gap_lo,
+                                             comment_gap_hi)
+                        log(f"[lightning]   ⏸ пауза {gap:.0f} с "
+                            f"перед следующим комментарием")
+                        time.sleep(gap)
                 except Exception as exc:
                     log(f"[lightning]   💬 комментарий к главе {cid} "
                         f"не удался: {exc}")

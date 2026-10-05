@@ -278,11 +278,16 @@ def parse_comment_jobs(raw):
     return jobs
 
 
-def post_comments(api, jobs, pause_s=0):
-    """Отправляет комментарии к главам. Возвращает список результатов."""
+def post_comments(api, jobs, burst=4, burst_pause_s=0,
+                  gap_lo=20, gap_hi=30):
+    """Отправляет комментарии к главам пачками. Возвращает результаты.
+
+    Между комментариями — случайная пауза gap_lo..gap_hi секунд,
+    после каждой пачки из burst комментариев — пауза burst_pause_s.
+    """
     results = []
 
-    for job in jobs:
+    for idx, job in enumerate(jobs, 1):
         try:
             ok, detail = api.comment_chapter(job["chapter"], job["text"])
 
@@ -296,12 +301,24 @@ def post_comments(api, jobs, pause_s=0):
         })
 
         print(
-            f"💬 глава {job['chapter']}: "
+            f"💬 глава {job['chapter']} ({idx}/{len(jobs)}): "
             f"{'комментарий отправлен' if ok else 'не отправлен — ' + detail}"
         )
 
-        if pause_s > 0 and len(results) < len(jobs):
-            time.sleep(pause_s)
+        if idx >= len(jobs):
+            break
+
+        if burst > 1 and burst_pause_s > 0 and idx % burst == 0:
+            print(
+                f"⏸ Пауза {burst_pause_s // 60} мин после "
+                f"{burst} комментариев."
+            )
+            time.sleep(burst_pause_s)
+            continue
+
+        gap = random.uniform(gap_lo, gap_hi)
+        print(f"⏸ Пауза {gap:.0f} с перед следующим комментарием.")
+        time.sleep(gap)
 
     return results
 
@@ -772,16 +789,30 @@ def run_dungeon_bot(proxy_url=None):
                     )
 
                 else:
-                    pause_s = int(
-                        os.getenv("POST_COMMENTS_PAUSE_S", "0") or 0
+                    burst = int(
+                        os.getenv("POST_COMMENTS_BURST", "4") or 4
+                    )
+                    burst_pause_s = int(
+                        os.getenv(
+                            "POST_COMMENTS_BURST_PAUSE_MIN", "3"
+                        ) or 0
+                    ) * 60
+                    gap_lo = int(
+                        os.getenv("POST_COMMENTS_GAP_MIN_S", "20") or 20
+                    )
+                    gap_hi = int(
+                        os.getenv("POST_COMMENTS_GAP_MAX_S", "30") or 30
                     )
                     print(
                         f"💬 Отправляю {len(comment_jobs)} "
-                        f"комментариев (пауза {pause_s} с)."
+                        f"комментариев: пачки по {burst}, "
+                        f"пауза {burst_pause_s // 60} мин, "
+                        f"{gap_lo}-{gap_hi} с между комментами."
                     )
                     try:
                         comments_res = post_comments(
-                            api, comment_jobs, pause_s
+                            api, comment_jobs, burst,
+                            burst_pause_s, gap_lo, gap_hi,
                         )
 
                     except Exception as exc:
