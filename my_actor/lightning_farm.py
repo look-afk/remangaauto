@@ -240,6 +240,13 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     comment_gap_lo = _env_int("CHAPTER_COMMENT_GAP_MIN_S", 20)
     comment_gap_hi = _env_int("CHAPTER_COMMENT_GAP_MAX_S", 30)
 
+    if comment_texts:
+        log(f"[lightning] комментарии включены: {len(comment_texts)} текст(ов), "
+            f"пачка по {comment_burst}, пауза {comment_pause // 60} мин, "
+            f"разрыв {comment_gap_lo}-{comment_gap_hi} с")
+    else:
+        log("[lightning] комментарии выключены (CHAPTER_COMMENT пуст)")
+
     read_done = 0
     commented = 0
     claimed_after = False

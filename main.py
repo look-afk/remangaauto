@@ -9,6 +9,27 @@ import requests
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
+try:
+    from my_actor.log import log as _pkg_log
+except Exception:  # локальный запуск без пакета my_actor
+    _pkg_log = None
+
+
+def log(msg: object = "") -> None:
+    """Логирование через Actor.log на Apify, иначе в stdout с flush.
+
+    Раньше здесь был голый print(): в контейнере Apify stdout буферизуется,
+    поэтому строки (в том числе про комментарии) могли вовсе не попадать
+    в лог прогона. Теперь всё идёт тем же бэкендом, что silver/lightning.
+    """
+    if _pkg_log is not None:
+        _pkg_log(msg)
+        return
+    try:
+        print(msg, flush=True)
+    except UnicodeEncodeError:
+        print(str(msg).encode("ascii", "replace").decode("ascii"), flush=True)
+
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -139,7 +160,7 @@ def parse_proxy(proxy_url):
 
 def send_telegram_photo(path, caption=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print(
+        log(
             "⚠️ Telegram не настроен: нужны "
             "TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID."
         )
@@ -169,17 +190,17 @@ def send_telegram_photo(path, caption=None):
         result = response.json()
 
         if not result.get("ok"):
-            print(
+            log(
                 "⚠️ Telegram API вернул ошибку: "
                 f"{result.get('description', 'unknown error')}"
             )
             return False
 
-        print("📨 Скриншот отправлен в Telegram.")
+        log("📨 Скриншот отправлен в Telegram.")
         return True
 
     except Exception as exc:
-        print(
+        log(
             f"⚠️ Не удалось отправить скриншот в Telegram: {exc}"
         )
         return False
@@ -188,7 +209,7 @@ def send_telegram_photo(path, caption=None):
 def send_telegram_text(text):
     """Отправка текстового отчёта в Telegram (TELEGRAM_* уже в env)."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print(
+        log(
             "⚠️ Telegram не настроен: нужны "
             "TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID."
         )
@@ -214,17 +235,17 @@ def send_telegram_text(text):
         result = response.json()
 
         if not result.get("ok"):
-            print(
+            log(
                 "⚠️ Telegram API вернул ошибку: "
                 f"{result.get('description', 'unknown error')}"
             )
             return False
 
-        print("📨 Отчёт отправлен в Telegram.")
+        log("📨 Отчёт отправлен в Telegram.")
         return True
 
     except Exception as exc:
-        print(f"⚠️ Не удалось отправить отчёт в Telegram: {exc}")
+        log(f"⚠️ Не удалось отправить отчёт в Telegram: {exc}")
         return False
 
 
@@ -300,7 +321,7 @@ def post_comments(api, jobs, burst=4, burst_pause_s=0,
             "detail": detail,
         })
 
-        print(
+        log(
             f"💬 глава {job['chapter']} ({idx}/{len(jobs)}): "
             f"{'комментарий отправлен' if ok else 'не отправлен — ' + detail}"
         )
@@ -309,7 +330,7 @@ def post_comments(api, jobs, burst=4, burst_pause_s=0,
             break
 
         if burst > 1 and burst_pause_s > 0 and idx % burst == 0:
-            print(
+            log(
                 f"⏸ Пауза {burst_pause_s // 60} мин после "
                 f"{burst} комментариев."
             )
@@ -317,7 +338,7 @@ def post_comments(api, jobs, burst=4, burst_pause_s=0,
             continue
 
         gap = random.uniform(gap_lo, gap_hi)
-        print(f"⏸ Пауза {gap:.0f} с перед следующим комментарием.")
+        log(f"⏸ Пауза {gap:.0f} с перед следующим комментарием.")
         time.sleep(gap)
 
     return results
@@ -410,15 +431,15 @@ def safe_screenshot(page, filename, message=None):
             full_page=False
         )
 
-        print(f"📸 Скриншот сохранён: {path}")
+        log(f"📸 Скриншот сохранён: {path}")
 
         if message:
-            print(message)
+            log(message)
 
         send_telegram_photo(path, message)
 
     except Exception as exc:
-        print(
+        log(
             f"⚠️ Не удалось сохранить скриншот: {exc}"
         )
 
@@ -457,7 +478,7 @@ def close_open_dialog(page):
         )
 
         if dialogs.count() > 0:
-            print(
+            log(
                 "🔒 Обнаружен открытый Dialog — "
                 "пытаюсь закрыть его."
             )
@@ -469,19 +490,19 @@ def close_open_dialog(page):
                 '[role="dialog"][data-state="open"]'
             ).count() > 0:
 
-                print(
+                log(
                     "⚠️ Dialog всё ещё открыт, "
                     "продолжаю повторный поиск кнопки 寺."
                 )
 
                 return False
 
-            print("✅ Dialog закрыт.")
+            log("✅ Dialog закрыт.")
 
         return True
 
     except Exception as exc:
-        print(
+        log(
             f"⚠️ Не удалось проверить/закрыть Dialog: {exc}"
         )
 
@@ -507,16 +528,16 @@ def click_temple(page, run_count):
             kanji = page.locator('span.font-kanji', has_text='寺').first
             
             if kanji.is_visible(timeout=2000):
-                print(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
+                log(f"🔎 寺 найден — пытаюсь нажать (попытка {attempt})...")
                 kanji.click(timeout=5000)
-                print("✅ Кликнул по кнопке с иероглифом 寺!")
+                log("✅ Кликнул по кнопке с иероглифом 寺!")
                 return True
             else:
-                print(f"🔎 寺 пока не виден — жду (попытка {attempt})...")
+                log(f"🔎 寺 пока не виден — жду (попытка {attempt})...")
                 
         except Exception as exc:
             last_error = exc
-            print(f"⚠️ Ошибка при клике на 寺 (попытка {attempt}): {exc}")
+            log(f"⚠️ Ошибка при клике на 寺 (попытка {attempt}): {exc}")
 
         page.wait_for_timeout(1000)
 
@@ -544,14 +565,14 @@ def wait_for_battle_again(page, run_count, attempt):
     """
     Ожидает появления кнопки боя (血)
     """
-    print(f"⏳ Жду следующую кнопку 血 (попытка {attempt})...")
+    log(f"⏳ Жду следующую кнопку 血 (попытка {attempt})...")
     try:
         # Ищем и ждем появления текста 血
         battle_btn = page.locator('text=血').first
         battle_btn.wait_for(state="visible", timeout=30000)
         return True
     except Exception:
-        print("ℹ️ 血 больше не появился — вероятно, маны больше не хватает.")
+        log("ℹ️ 血 больше не появился — вероятно, маны больше не хватает.")
         safe_screenshot(
             page,
             f"cycle_{run_count}_attempt_{attempt}_no_mana.png",
@@ -561,7 +582,7 @@ def wait_for_battle_again(page, run_count, attempt):
 
 
 def run_dungeon_bot(proxy_url=None):
-    print(
+    log(
         "[2026-09-08] "
         "Запуск задачи фарма катакомб..."
     )
@@ -584,7 +605,7 @@ def run_dungeon_bot(proxy_url=None):
     if raw_cookies:
         cookies = parse_raw_cookie_header(raw_cookies)
 
-        print(
+        log(
             f"🍪 Куки из REMANGA_COOKIES_RAW: "
             f"{len(cookies)}"
         )
@@ -598,14 +619,14 @@ def run_dungeon_bot(proxy_url=None):
                 cookie_json_path
             )
 
-            print(
+            log(
                 f"🍪 Загружено cookies: "
                 f"{len(cookies)} "
                 f"({cookie_json_path})"
             )
 
         except Exception as exc:
-            print(
+            log(
                 "⚠️ Не удалось загрузить "
                 f"JSON cookies: {exc}"
             )
@@ -619,14 +640,14 @@ def run_dungeon_bot(proxy_url=None):
                 cookie_file_path
             )
 
-            print(
+            log(
                 f"🍪 Загружено cookies: "
                 f"{len(cookies)} "
                 f"({cookie_file_path})"
             )
 
         except Exception as exc:
-            print(
+            log(
                 "⚠️ Не удалось загрузить "
                 f"cookies: {exc}"
             )
@@ -645,7 +666,7 @@ def run_dungeon_bot(proxy_url=None):
         proxy = parse_proxy(proxy_url)
 
         if proxy_url:
-            print(
+            log(
                 "🌐 Playwright запускается "
                 "через настроенный прокси."
             )
@@ -676,7 +697,7 @@ def run_dungeon_bot(proxy_url=None):
                 )
 
             except Exception as exc:
-                print(
+                log(
                     "⚠️ Не удалось применить "
                     f"cookies: {exc}"
                 )
@@ -714,7 +735,7 @@ def run_dungeon_bot(proxy_url=None):
             api.bind_context(context)
 
         try:
-            print(
+            log(
                 "🔗 Переход на "
                 "https://remanga.org/murim-cards#/map..."
             )
@@ -725,7 +746,7 @@ def run_dungeon_bot(proxy_url=None):
                 timeout=60000,
             )
 
-            print(
+            log(
                 "🌐 HTTP status: "
                 f"{response.status if response else 'unknown'}"
             )
@@ -735,13 +756,13 @@ def run_dungeon_bot(proxy_url=None):
                     f"через прокси {proxy_url}" if proxy_url
                     else "напрямую (IP без прокси)"
                 )
-                print(
+                log(
                     "⚠️ Сайт закрыт DDoS-Guard/антиботом ("
                     f"{response.status}) {route}. "
                     "Если повторяется — задай свой прокси в поле proxyUrl."
                 )
 
-            print(
+            log(
                 "⏳ Ожидаю интерфейс..."
             )
 
@@ -762,14 +783,14 @@ def run_dungeon_bot(proxy_url=None):
             )
 
             if is_authenticated(page):
-                print(
+                log(
                     "🍪✅ Cookies рабочие — "
                     "вход через логин/пароль "
                     "не требуется."
                 )
 
             else:
-                print(
+                log(
                     "⚠️ Не удалось подтвердить "
                     "авторизацию по cookies."
                 )
@@ -782,8 +803,17 @@ def run_dungeon_bot(proxy_url=None):
             comments_res = []
 
             if comment_jobs:
+                log(f"💬 Комментарии: {len(comment_jobs)} шт. из POST_COMMENTS.")
+            elif (os.getenv("CHAPTER_COMMENT") or "").strip():
+                log("💬 Комментарии: включены при чтении глав "
+                    "(CHAPTER_COMMENT) — ищи строки «💬 комментарий …» ниже.")
+            else:
+                log("💬 Комментарии не заданы "
+                    "(POST_COMMENTS / CHAPTER_COMMENT пусты).")
+
+            if comment_jobs:
                 if api is None:
-                    print(
+                    log(
                         "⚠️ Комментарии пропущены: "
                         "нет API-клиента (куки)."
                     )
@@ -803,7 +833,7 @@ def run_dungeon_bot(proxy_url=None):
                     gap_hi = int(
                         os.getenv("POST_COMMENTS_GAP_MAX_S", "30") or 30
                     )
-                    print(
+                    log(
                         f"💬 Отправляю {len(comment_jobs)} "
                         f"комментариев: пачки по {burst}, "
                         f"пауза {burst_pause_s // 60} мин, "
@@ -816,7 +846,7 @@ def run_dungeon_bot(proxy_url=None):
                         )
 
                     except Exception as exc:
-                        print(
+                        log(
                             "⚠️ Ошибка отправки "
                             f"комментариев: {exc}"
                         )
@@ -847,7 +877,7 @@ def run_dungeon_bot(proxy_url=None):
 
                     silver_res = farm_silver(api=api)
                 except Exception as exc:
-                    print(f"⚠️ Ошибка фарма серебра: {exc}")
+                    log(f"⚠️ Ошибка фарма серебра: {exc}")
                     silver_res = {"ok": False, "reason": str(exc)[:120]}
 
             # ⚡ Молнии: используем отдельный актуальный фармер,
@@ -859,7 +889,7 @@ def run_dungeon_bot(proxy_url=None):
                     li_res = farm_lightning(page, session=session, api=api)
                     page = session.get()
                 except Exception as exc:
-                    print(f"⚠️ Ошибка фарма молний: {exc}")
+                    log(f"⚠️ Ошибка фарма молний: {exc}")
                     li_res = {"ok": False, "reason": str(exc)[:120]}
                     page = session.get()
 
@@ -894,7 +924,7 @@ def run_dungeon_bot(proxy_url=None):
                         )
                     )
                 except Exception as exc:
-                    print(f"⚠️ Не удалось отправить TG-отчёт: {exc}")
+                    log(f"⚠️ Не удалось отправить TG-отчёт: {exc}")
 
             run_count = 0
 
@@ -909,7 +939,7 @@ def run_dungeon_bot(proxy_url=None):
             # (FARM_SILVER) — быстрее и без зависимости от анимаций.
             dungeon_ui = os.getenv("FARM_DUNGEON_UI", "0") == "1"
             if not dungeon_ui:
-                print(
+                log(
                     "⏭ UI-цикл катакомб выключен "
                     "(FARM_DUNGEON_UI=1 — включить обратно)."
                 )
@@ -918,8 +948,8 @@ def run_dungeon_bot(proxy_url=None):
 
                 run_count += 1
 
-                print()
-                print(
+                log()
+                log(
                     f"--- Запуск цикла "
                     f"прохода №{run_count} ---"
                 )
@@ -928,7 +958,7 @@ def run_dungeon_bot(proxy_url=None):
                     max_runs > 0
                     and run_count > max_runs
                 ):
-                    print(
+                    log(
                         f"🛑 Достигнут "
                         f"MAX_RUNS={max_runs}."
                     )
@@ -959,7 +989,7 @@ def run_dungeon_bot(proxy_url=None):
                         run_count,
                         attempt,
                     ):
-                        print(
+                        log(
                             "🛑 Маны недостаточно. "
                             f"Завершено боёв: "
                             f"{attempt - 1}."
@@ -969,7 +999,7 @@ def run_dungeon_bot(proxy_url=None):
                     # Нажимаем напрямую на текст 血
                     click_battle(page)
 
-                    print(
+                    log(
                         f"⚔️ Нажата кнопка 血 — "
                         f"бой №{attempt}!"
                     )
@@ -1000,7 +1030,7 @@ def run_dungeon_bot(proxy_url=None):
                             force=True,
                         )
 
-                    print(
+                    log(
                         "✅ Возвращаемся на карту."
                     )
 
@@ -1014,7 +1044,7 @@ def run_dungeon_bot(proxy_url=None):
                         "span.font-kanji"
                     ).count() > 0:
 
-                        print(
+                        log(
                             "ℹ️ Элементы карты "
                             "обнаружены, следующий "
                             "цикл снова будет искать 寺."
@@ -1022,7 +1052,7 @@ def run_dungeon_bot(proxy_url=None):
 
                     else:
 
-                        print(
+                        log(
                             "ℹ️ Кнопка возврата "
                             "на карту сейчас "
                             "недоступна."
@@ -1030,7 +1060,7 @@ def run_dungeon_bot(proxy_url=None):
 
         except Exception as exc:
 
-            print(
+            log(
                 f"❌ Ошибка Actor-задачи: {exc}"
             )
 
@@ -1044,7 +1074,7 @@ def run_dungeon_bot(proxy_url=None):
 
             browser.close()
 
-            print(
+            log(
                 "🏁 Браузер закрыт."
             )
 
