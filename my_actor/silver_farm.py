@@ -8,8 +8,9 @@
     (`/api/v2/events/card-battle/daily/{id}/claim/`);
   * опциональный обмен молний на серебро.
 
-Логика фарма: тратим всю энергию на самую дорогую *безопасную* локацию
-(босс не сильнее отряда), потом забираем все выполненные дневные задания.
+Логика фарма — «лестница»: начинаем с самого сложного открытого данжа,
+при поражении спускаемся на ступень ниже, а на первой проходимой остаёмся
+и добиваем её до конца энергии. Потом забираем дневные задания.
 """
 
 from __future__ import annotations
@@ -59,45 +60,43 @@ def _env_pause(name: str, default: tuple[int, int]) -> tuple[int, int]:
 
 # ---------------------------------------------------------------- выбор локации
 
-def pick_location(locations: list[dict], squad_power: int,
-                  *, safe_only: bool = True, forced_id=None) -> dict | None:
-    """Самая прибыльная локация, которую точно выигрываем.
+def _worth_trying(loc: dict, squad_power: int, safe_only: bool) -> bool:
+    """Отсекаем заведомо безнадёжные локации, если включён safe_only."""
+    if not safe_only:
+        return True
+    forecast = str(loc.get("forecast") or "")
+    boss = int(loc.get("boss_power") or 0)
+    if forecast in BAD_FORECASTS and boss > squad_power:
+        return False
+    return True
 
-    Серебро за рейд у всех открытых локаций примерно равно цене входа,
-    поэтому берём максимальный повторный награду (= меньше рейдов на ту же
-    сумму), не забывая про разовый бонус за первую зачистку.
+
+def ladder_locations(locations: list[dict], squad_power: int = 0, *,
+                     safe_only: bool = True, forced_id=None) -> list[dict]:
+    """Открытые локации по убыванию сложности: сверху — самый сложный данж.
+
+    Фарм идёт «лестницей»: начинаем с верхней ступени, при каждом поражении
+    спускаемся на одну ниже, а на первой проходимой остаёмся и добиваем её
+    до конца энергии.
+
+    forced_id — принудительно оставляем только эту локацию.
     """
     if not locations:
-        return None
+        return []
 
     if forced_id:
-        for loc in locations:
-            if int(loc.get("id") or -1) == int(forced_id):
-                return loc
+        forced = [loc for loc in locations
+                  if int(loc.get("id") or -1) == int(forced_id)]
+        if forced:
+            return forced
 
-    candidates = []
-    for loc in locations:
-        if not loc.get("unlocked"):
-            continue
-        if safe_only:
-            forecast = str(loc.get("forecast") or "")
-            boss = int(loc.get("boss_power") or 0)
-            if forecast in BAD_FORECASTS and boss > squad_power:
-                continue
-            if boss > squad_power and forecast not in SAFE_FORECASTS:
-                continue
-        cost = int(loc.get("energy_cost") or 0)
-        repeat = int(loc.get("event_points_reward_repeat") or 0)
-        if cost <= 0 or repeat <= 0:
-            continue
-        first = int(loc.get("event_points_reward_first") or 0) if not loc.get("cleared") else 0
-        score = (repeat, first, -int(loc.get("order") or 0))
-        candidates.append((score, loc))
-
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    ladder = [loc for loc in locations
+              if loc.get("unlocked") and _worth_trying(loc, squad_power, safe_only)]
+    ladder.sort(
+        key=lambda loc: (int(loc.get("order") or 0), int(loc.get("id") or 0)),
+        reverse=True,
+    )
+    return ladder
 
 
 # ---------------------------------------------------------------- дневные задания
@@ -160,12 +159,15 @@ def exchange_lightning(api: RemangaApi, amount: int, log=_log) -> int:
 # ---------------------------------------------------------------- основной фарм
 
 def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict:
-    """Тратит всю энергию на локации и забирает дневные задания.
+    """Тратит всю энергию «лестницей» и забирает дневные задания.
+
+    Идём с самого сложного открытого данжа вниз: проигрыш -> ступень ниже,
+    победа -> остаёмся на этом данже и добиваем его до конца энергии.
 
     Env:
       SILVER_MAX_RAIDS      — максимум рейдов за запуск (0 = пока есть энергия)
-      SILVER_LOCATION       — id локации принудительно
-      SILVER_SAFE_ONLY      — 1 (по умолчанию) не лезть в заведомо проигрышные
+      SILVER_LOCATION       — id локации принудительно (лестница выключена)
+      SILVER_SAFE_ONLY      — 1 (по умолчанию) пропускать заведомо безнадёжные
       SILVER_PAUSE_MS       — пауза между рейдами, '350-1200' или '500'
       SILVER_MIN_ENERGY     — сколько энергии не трогать (по умолчанию 0)
       SILVER_BUY_LIGHTNING  — сколько молний обменять на серебро (0 = выкл)
@@ -204,8 +206,9 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
     claimed = claim_dailies(api, log=log) if do_claim else []
 
     locations = api.locations()
-    loc = pick_location(locations, squad_power, safe_only=safe_only, forced_id=forced)
-    if not loc:
+    ladder = ladder_locations(locations, squad_power,
+                              safe_only=safe_only, forced_id=forced)
+    if not ladder:
         log("[silver] нет доступных локаций")
         return {"ok": False, "reason": "no_locations", "silver_before": silver_before}
 
@@ -214,8 +217,16 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
     silver_earned_raid = 0
     note = ""
 
+    rung = 0
+    loc = ladder[rung]
+    log(f"[silver] старт с данжа {loc.get('order')} «{loc.get('name')}» "
+        f"(босс {int(loc.get('boss_power') or 0)}, отряд {squad_power})")
+
     while True:
         cost = int(loc.get("energy_cost") or 0)
+        if cost <= 0:
+            note = f"локация {loc.get('id')} без цены входа"
+            break
         if energy < cost + min_energy:
             break
         if max_raids and raids >= max_raids:
@@ -242,21 +253,23 @@ def farm_silver(api: RemangaApi | None = None, *, log=_log, **overrides) -> dict
         energy_spent += spent
 
         if status == "won":
+            # проходимый данж найден — остаёмся на нём до конца энергии
             won += 1
             silver_earned_raid += earned
         else:
             lost += 1
-            log(f"[silver] локация {loc['id']} проиграна (status={status}) — "
-                f"ищу более безопасную")
-            if lost >= 2:
-                note = "серия поражений — останавливаюсь"
+            prev = loc
+            rung += 1
+            if rung >= len(ladder):
+                log(f"[silver] данж {prev.get('order')} «{prev.get('name')}» "
+                    f"проигран — проще уже некуда, останавливаюсь")
+                note = "поражение на самой простой локации"
                 break
-            locations = api.locations()
-            safer = pick_location(locations, squad_power, safe_only=True)
-            if not safer or int(safer["id"]) == int(loc["id"]):
-                note = "безопасных локаций не осталось"
-                break
-            loc = safer
+            loc = ladder[rung]
+            log(f"[silver] данж {prev.get('order')} «{prev.get('name')}» "
+                f"проигран (status={status}) — спускаюсь на данж "
+                f"{loc.get('order')} «{loc.get('name')}» "
+                f"(босс {int(loc.get('boss_power') or 0)})")
             continue
 
         if raids % 10 == 0:

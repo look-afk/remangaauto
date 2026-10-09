@@ -83,6 +83,7 @@ Progress for the reader is persisted in `lightning_state.json`, so restarting th
 - **Pin a title list** (`readTitleUrls`) instead of the collection page — it saves a browser navigation per run.
 - **Keep `farmSilver` and `farmLightning` together**: reading 10 chapters completes the reading quests, which are worth +55 silver and +100 lightning per day on top of the raids.
 - Set `SILVER_MAX_RAIDS` to a small number if you only want to top up a specific quest.
+- **Silver uses a "ladder"**: it starts from the hardest unlocked dungeon and, on every loss, drops one tier down; the first tier it beats is then farmed non-stop until all energy is gone. Pin one dungeon with `SILVER_LOCATION` to skip the ladder.
 
 ## FAQ, disclaimers, and support
 
