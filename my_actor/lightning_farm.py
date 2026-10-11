@@ -228,8 +228,9 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
         log("[lightning] тайтлы не найдены")
         return {"ok": False, "reason": "no_titles"}
 
+    # Не перемешиваем тайтлы: после перезапуска продолжаем по стабильному списку.
+    # Уже прочитанные chapter ID отсекаются через read_set и API viewed.
     read_set = {str(x) for x in state.get("read", [])}
-    random.shuffle(titles)
 
     read_cfg = rdr.scroll_cfg_from_env()
     pause_raw = os.getenv("LIGHTNING_PAUSE_MS") or "400-1600"
