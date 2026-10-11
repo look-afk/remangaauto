@@ -359,10 +359,6 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                                 log(f"[lightning]   ⏸ отдых {comment_pause // 60} мин "
                                     f"после {comment_burst} комментариев")
                                 time.sleep(comment_pause)
-                            elif state["comments_count"] < comment_daily_limit:
-                                gap = random.uniform(comment_gap_lo, comment_gap_hi)
-                                log(f"[lightning]   ⏸ пауза {gap:.0f} с перед следующим комментарием")
-                                time.sleep(gap)
                         else:
                             log(f"[lightning]   💬 комментарий к главе {cid} "
                                 f"не отправлен: {detail}")
