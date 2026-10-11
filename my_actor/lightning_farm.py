@@ -259,6 +259,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
 
     read_done = 0
     commented = 0
+    comment_limit_logged = False
     claimed_after = False
     dailies_claimed = 0
     errors = 0
@@ -334,11 +335,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
 
             if comment_texts and (not comment_once or commented < 1):
                 if state["comments_count"] >= comment_daily_limit:
-                    if state["comments_count"] == comment_daily_limit:
+                    if not comment_limit_logged:
                         log(f"[lightning] дневной лимит комментариев достигнут: "
                             f"{state['comments_count']}/{comment_daily_limit}; "
                             "дальнейшие комментарии сегодня отключены")
-                        state["comments_count"] += 1  # не повторять сообщение в этом запуске
+                        comment_limit_logged = True
                     # Не прекращаем чтение глав — только комментарии.
                 else:
                     text = comment_texts[commented % len(comment_texts)]
