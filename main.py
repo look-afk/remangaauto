@@ -581,6 +581,31 @@ def wait_for_battle_again(page, run_count, attempt):
         return False
 
 
+def goto_with_retries(page, url, attempts=3, timeout_ms=60000):
+    """Открывает страницу с повторными попытками при сетевых тайм-аутах."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=timeout_ms,
+            )
+            log(f"🌐 Переход успешен (попытка {attempt}/{attempts}).")
+            return response
+        except Exception as exc:
+            last_error = exc
+            log(
+                f"⚠️ Переход не удался (попытка {attempt}/{attempts}): "
+                f"{str(exc)[:180]}"
+            )
+            if attempt < attempts:
+                time.sleep(min(3 * attempt, 8))
+    raise RuntimeError(
+        f"Не удалось открыть {url} после {attempts} попыток: {last_error}"
+    ) from last_error
+
+
 def run_dungeon_bot(proxy_url=None):
     log(
         "[2026-09-08] "
@@ -740,10 +765,8 @@ def run_dungeon_bot(proxy_url=None):
                 "https://remanga.org/murim-cards#/map..."
             )
 
-            response = page.goto(
-                "https://remanga.org/murim-cards#/map",
-                wait_until="domcontentloaded",
-                timeout=60000,
+            response = goto_with_retries(
+                page, "https://remanga.org/murim-cards#/map"
             )
 
             log(
@@ -808,8 +831,11 @@ def run_dungeon_bot(proxy_url=None):
                 log("💬 Комментарии: включены при чтении глав "
                     "(CHAPTER_COMMENT) — ищи строки «💬 комментарий …» ниже.")
             else:
-                log("💬 Комментарии не заданы "
-                    "(POST_COMMENTS / CHAPTER_COMMENT пусты).")
+                log(
+                    "💬 Комментарии не отправляются: POST_COMMENTS и "
+                    "CHAPTER_COMMENT пусты. Добавь свой текст комментария "
+                    "в настройках Actor (Environment variables)."
+                )
 
             if comment_jobs:
                 if api is None:
@@ -894,10 +920,8 @@ def run_dungeon_bot(proxy_url=None):
                     page = session.get()
 
                 # Возвращаемся на карту перед основной фармой.
-                page.goto(
-                    "https://remanga.org/murim-cards#/map",
-                    wait_until="domcontentloaded",
-                    timeout=60000,
+                goto_with_retries(
+                    page, "https://remanga.org/murim-cards#/map"
                 )
                 try:
                     page.wait_for_selector(
