@@ -56,9 +56,17 @@ def load_state() -> dict:
         state = {}
 
     if state.get("date") != _today():
-        state = {"date": _today(), "count": 0, "read": state.get("read", [])}
+        state = {
+            "date": _today(),
+            "count": 0,
+            "read": state.get("read", []),
+            "comments_count": 0,
+            "comments": [],
+        }
     state.setdefault("count", 0)
     state.setdefault("read", [])
+    state.setdefault("comments_count", 0)
+    state.setdefault("comments", [])
     return state
 
 
@@ -237,13 +245,15 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     comment_once = _env_bool("CHAPTER_COMMENT_ONCE", False)
     comment_burst = max(1, _env_int("CHAPTER_COMMENT_BURST", 4))
     comment_pause = _env_int("CHAPTER_COMMENT_BURST_PAUSE_MIN", 3) * 60
+    comment_daily_limit = max(0, _env_int("CHAPTER_COMMENT_DAILY_LIMIT", 60))
     comment_gap_lo = _env_int("CHAPTER_COMMENT_GAP_MIN_S", 20)
     comment_gap_hi = _env_int("CHAPTER_COMMENT_GAP_MAX_S", 30)
 
     if comment_texts:
         log(f"[lightning] комментарии включены: {len(comment_texts)} текст(ов), "
             f"пачка по {comment_burst}, пауза {comment_pause // 60} мин, "
-            f"разрыв {comment_gap_lo}-{comment_gap_hi} с")
+            f"дневной лимит {comment_daily_limit}; сегодня уже "
+            f"{state['comments_count']}")
     else:
         log("[lightning] комментарии выключены (CHAPTER_COMMENT пуст)")
 
@@ -323,28 +333,41 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             save_state(state)
 
             if comment_texts and (not comment_once or commented < 1):
-                text = comment_texts[commented % len(comment_texts)]
-                try:
-                    sent, detail = api.comment_chapter(cid, text)
-                    commented += 1
-                    state.setdefault("comments", []).append(cid)
-                    save_state(state)
-                    log(f"[lightning]   💬 комментарий {commented} к главе "
-                        f"{cid}: {'отправлен' if sent else 'не отправлен — ' + detail}")
-                    if (comment_burst > 1 and comment_pause
-                            and commented % comment_burst == 0):
-                        log(f"[lightning]   ⏸ пауза {comment_pause // 60} мин "
-                            f"после пачки из {comment_burst} комментариев")
-                        time.sleep(comment_pause)
-                    else:
-                        gap = random.uniform(comment_gap_lo,
-                                             comment_gap_hi)
-                        log(f"[lightning]   ⏸ пауза {gap:.0f} с "
-                            f"перед следующим комментарием")
-                        time.sleep(gap)
-                except Exception as exc:
-                    log(f"[lightning]   💬 комментарий к главе {cid} "
-                        f"не удался: {exc}")
+                if state["comments_count"] >= comment_daily_limit:
+                    if state["comments_count"] == comment_daily_limit:
+                        log(f"[lightning] дневной лимит комментариев достигнут: "
+                            f"{state['comments_count']}/{comment_daily_limit}; "
+                            "дальнейшие комментарии сегодня отключены")
+                        state["comments_count"] += 1  # не повторять сообщение в этом запуске
+                    # Не прекращаем чтение глав — только комментарии.
+                else:
+                    text = comment_texts[commented % len(comment_texts)]
+                    try:
+                        sent, detail = api.comment_chapter(cid, text)
+                        if sent:
+                            commented += 1
+                            state["comments_count"] += 1
+                            state.setdefault("comments", []).append(cid)
+                            save_state(state)
+                            log(f"[lightning]   💬 комментарий {commented} к главе "
+                                f"{cid}: отправлен (сегодня "
+                                f"{state['comments_count']}/{comment_daily_limit})")
+                            if (comment_burst > 0 and comment_pause > 0
+                                    and state["comments_count"] % comment_burst == 0
+                                    and state["comments_count"] < comment_daily_limit):
+                                log(f"[lightning]   ⏸ отдых {comment_pause // 60} мин "
+                                    f"после {comment_burst} комментариев")
+                                time.sleep(comment_pause)
+                            elif state["comments_count"] < comment_daily_limit:
+                                gap = random.uniform(comment_gap_lo, comment_gap_hi)
+                                log(f"[lightning]   ⏸ пауза {gap:.0f} с перед следующим комментарием")
+                                time.sleep(gap)
+                        else:
+                            log(f"[lightning]   💬 комментарий к главе {cid} "
+                                f"не отправлен: {detail}")
+                    except Exception as exc:
+                        log(f"[lightning]   💬 комментарий к главе {cid} "
+                            f"не удался: {exc}")
 
             if not claimed_after and state["count"] >= 10:
                 dailies_claimed += len(claim_dailies(api, log=log))
