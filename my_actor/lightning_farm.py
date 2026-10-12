@@ -247,8 +247,9 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     comment_burst = max(1, _env_int("CHAPTER_COMMENT_BURST", 4))
     comment_pause = _env_int("CHAPTER_COMMENT_BURST_PAUSE_MIN", 3) * 60
     comment_daily_limit = max(0, _env_int("CHAPTER_COMMENT_DAILY_LIMIT", 60))
-    comment_gap_lo = _env_int("CHAPTER_COMMENT_GAP_MIN_S", 20)
-    comment_gap_hi = _env_int("CHAPTER_COMMENT_GAP_MAX_S", 30)
+    # После серии комментариев продолжаем читать главы, но временно не комментируем.
+    # Во время паузы чтение НЕ останавливается.
+    comment_pause_until = float(state.get("comment_pause_until", 0) or 0)
 
     if comment_texts:
         log(f"[lightning] комментарии включены: {len(comment_texts)} текст(ов), "
@@ -335,7 +336,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             save_state(state)
 
             if comment_texts and (not comment_once or commented < 1):
-                if state["comments_count"] >= comment_daily_limit:
+                now = time.time()
+                if now < comment_pause_until:
+                    remaining = int(comment_pause_until - now)
+                    log(f"[lightning]   💬 пауза комментариев ещё {remaining} сек.; продолжаю читать без комментария")
+                elif state["comments_count"] >= comment_daily_limit:
                     if not comment_limit_logged:
                         log(f"[lightning] дневной лимит комментариев достигнут: "
                             f"{state['comments_count']}/{comment_daily_limit}; "
@@ -355,11 +360,13 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                                 f"{cid}: отправлен (сегодня "
                                 f"{state['comments_count']}/{comment_daily_limit})")
                             if (comment_burst > 0 and comment_pause > 0
-                                    and state["comments_count"] % comment_burst == 0
+                                    and commented % comment_burst == 0
                                     and state["comments_count"] < comment_daily_limit):
-                                log(f"[lightning]   ⏸ отдых {comment_pause // 60} мин "
-                                    f"после {comment_burst} комментариев")
-                                time.sleep(comment_pause)
+                                comment_pause_until = time.time() + comment_pause
+                                state["comment_pause_until"] = comment_pause_until
+                                save_state(state)
+                                log(f"[lightning]   ⏸ пауза комментариев на {comment_pause // 60} мин "
+                                    f"после {comment_burst} комментариев; чтение глав продолжается без ожидания")
                         else:
                             log(f"[lightning]   💬 комментарий к главе {cid} "
                                 f"не отправлен: {detail}")
