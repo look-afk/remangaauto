@@ -990,7 +990,7 @@ def run_dungeon_bot(proxy_url=None):
                     )
                     if repass_res is not None:
                         report_text += (
-                            "\\n🎟 Re:Pass: собрано наград — "
+                            "\n🎟 Re:Pass: собрано наград — "
                             f"{int(repass_res.get('claimed') or 0)}"
                         )
                     send_telegram_text(report_text)
