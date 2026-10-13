@@ -35,7 +35,13 @@ The Actor is built for long unattended runs: it works with your own cookies, bac
 | `useFreeProxy` | boolean | `true` | Auto-picks a **free proxy in CIS countries** (RU, KZ, BY, UZ, …) from an open daily-updated list and routes the browser + API through it. Candidates are checked in Chromium against the actual Murim Cards page, not only with a basic HTTP request. If the selected proxy fails during navigation, the Actor does not silently switch to the direct IP; rerun to test a fresh candidate. |
 | `proxyCountries` | string | `RU,KZ,BY,UZ,…` | Comma-separated ISO country codes used to pick the free proxy. |
 
-The same settings are available as environment variables for local runs: `FARM_SILVER`, `SILVER_MAX_RAIDS`, `SILVER_PAUSE_MS`, `SILVER_LOCATION`, `SILVER_BUY_LIGHTNING`, `CLAIM_DAILIES`, `FARM_LIGHTNING`, `LIGHTNING_MAX_CHAPTERS`, `LIGHTNING_SKIP_PAID`, `READ_TITLE_URLS`, `READ_COLLECTION_URL`, `FARM_DUNGEON_UI`, `REMANGA_COOKIES_RAW` / `REMANGA_COOKIES_JSON`, `TG_REPORT`, `USE_FREE_PROXY`, `PROXY_COUNTRIES`, `PROXY_URL` / `CUSTOM_PROXY`.
+The same settings are available as environment variables for local runs: `FARM_SILVER`, `SILVER_MAX_RAIDS`, `SILVER_PAUSE_MS`, `SILVER_LOCATION`, `SILVER_BUY_LIGHTNING`, `CLAIM_DAILIES`, `FARM_LIGHTNING`, `LIGHTNING_MAX_CHAPTERS`, `LIGHTNING_SKIP_PAID`, `READ_TITLE_URLS`, `READ_COLLECTION_URL`, `FARM_DUNGEON_UI`, `REMANGA_COOKIES_RAW` / `REMANGA_COOKIES_JSON`, `TG_REPORT`, `CLAIM_REPASS`, `USE_FREE_PROXY`, `PROXY_COUNTRIES`, `PROXY_URL` / `CUSTOM_PROXY`.
+
+### Additional reward handling
+
+- Daily quest rewards are checked again at the end of the run, including when the chapter limit was already reached.
+- The daily chapter/comment state resets using **Uzbekistan time (Asia/Tashkent, UTC+5)** and is saved atomically to reduce the chance of a corrupted state file.
+- `CLAIM_REPASS=1` (default) makes a best-effort attempt to open Re:Pass and collect only visible, enabled reward buttons. It does not purchase a subscription or call undocumented reward endpoints. If the site's UI changes, the Actor logs a skip rather than guessing.
 
 ## Telegram report
 
