@@ -44,16 +44,25 @@ def claim_repass_rewards(page, log=_log, max_claims: int = 50) -> dict:
             log("[repass] пункт Re:Pass не найден в интерфейсе — пропускаю.")
             return {"ok": False, "claimed": 0, "reason": "menu_not_found"}
 
+        start_url = page.url
         repass.click(timeout=5000)
         page.wait_for_timeout(1400)
 
         parsed = urlparse(page.url)
-        if parsed.netloc and not parsed.netloc.endswith("remanga.org"):
+        hostname = (parsed.hostname or "").lower()
+        if hostname and hostname != "remanga.org" and not hostname.endswith(".remanga.org"):
             log("[repass] переход за пределы remanga.org — остановлен.")
             return {"ok": False, "claimed": 0, "reason": "external_redirect"}
 
-        body = (page.locator("body").inner_text(timeout=5000) or "").lower()
-        if "re:pass" not in body and "repass" not in body and "ре:пасс" not in body:
+        path = parsed.path.lower()
+        heading_found = False
+        try:
+            heading_found = page.get_by_role("heading", name=_REPASS).count() > 0
+        except Exception:
+            pass
+        route_changed = page.url != start_url
+        route_matches = "repass" in path or "re:pass" in path or "ре-пасс" in path
+        if not (route_changed or route_matches or heading_found):
             log("[repass] страница Re:Pass не подтверждена — ничего не нажимаю.")
             return {"ok": False, "claimed": 0, "reason": "page_not_confirmed"}
 
