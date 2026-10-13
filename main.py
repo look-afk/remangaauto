@@ -3,6 +3,7 @@ import os
 import random
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 import requests
@@ -355,8 +356,12 @@ def build_report(silver=None, lightning=None, li_before=None, li_after=None,
     started_ts — time.time() в начале прогона (для строки «⏱»)
     now_ts     — время отчёта (для заголовка), по умолчанию текущее
     """
-    ts = datetime.fromtimestamp(now_ts if now_ts is not None else time.time())
-    lines = [f"📊 Remanga — итог прогона ({ts.strftime('%d.%m %H:%M')})"]
+    timestamp = now_ts if now_ts is not None else time.time()
+    try:
+        ts = datetime.fromtimestamp(timestamp, ZoneInfo("Asia/Tashkent"))
+    except Exception:
+        ts = datetime.fromtimestamp(timestamp)
+    lines = [f"📊 Remanga — итог прогона ({ts.strftime('%d.%m %H:%M')} UTC+5)"]
 
     silver = silver if isinstance(silver, dict) else {}
     lightning = lightning if isinstance(lightning, dict) else {}
@@ -380,7 +385,8 @@ def build_report(silver=None, lightning=None, li_before=None, li_after=None,
 
     if li_before is not None and li_after is not None:
         delta = int(li_after) - int(li_before)
-        lines.append(f"⚡ молнии: {li_before} → {li_after} (+{delta})")
+        sign = "+" if delta > 0 else ""
+        lines.append(f"⚡ молнии: {li_before} → {li_after} ({sign}{delta})")
     else:
         lines.append("⚡ молнии: —")
 
