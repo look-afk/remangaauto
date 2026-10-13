@@ -180,9 +180,14 @@ def chapters_to_read(api, slug: str, read_set: set[str], skip_paid: bool = True)
             cid = ch.get("id")
             if not cid:
                 continue
-            if rdr.view_is_read(ch.get("viewed")):
-                continue
-            if str(cid) in read_set:
+            # Trust explicit server status over the old local cache. Earlier versions
+            # could save partially read chapters locally and then skip them forever.
+            if "viewed" in ch and ch.get("viewed") is not None:
+                if rdr.view_is_read(ch.get("viewed")):
+                    continue
+                read_set.discard(str(cid))
+            elif str(cid) in read_set:
+                # Only use local cache when the API does not expose a viewed flag.
                 continue
             if skip_paid and ch.get("is_paid") and not ch.get("is_bought") \
                     and not ch.get("is_free_today"):
@@ -284,6 +289,18 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             f"{state['comments_count']}")
     else:
         log("[lightning] комментарии выключены (CHAPTER_COMMENT пуст)")
+
+    balance_start = None
+    balance_last = None
+    if api is not None:
+        try:
+            balance = api.lightning_balance()
+            if getattr(api, "last_status", None) == 200:
+                balance_start = balance
+                balance_last = balance
+                log(f"[lightning] баланс до чтения: {balance}")
+        except Exception as exc:
+            log(f"[lightning] не удалось проверить баланс до чтения: {str(exc)[:120]}")
 
     read_done = 0
     commented = 0
@@ -397,6 +414,32 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             read_done += 1
             save_state(state)
 
+            # Actual balance is checked periodically: reading rewards may be
+            # batched and do not necessarily arrive for every chapter.
+            if read_done % 3 == 0 and api is not None:
+                try:
+                    current_balance = api.lightning_balance()
+                    if getattr(api, "last_status", None) == 200:
+                        if balance_last is not None:
+                            log(
+                                f"[lightning] баланс после {read_done} подтверждённых "
+                                f"глав: {current_balance} ({current_balance - balance_last:+d} "
+                                "с прошлой проверки)"
+                            )
+                        else:
+                            log(
+                                f"[lightning] баланс после {read_done} подтверждённых "
+                                f"глав: {current_balance}"
+                            )
+                        balance_last = current_balance
+                    else:
+                        log(
+                            f"[lightning] баланс не проверен: HTTP "
+                            f"{getattr(api, 'last_status', 'unknown')}"
+                        )
+                except Exception as exc:
+                    log(f"[lightning] ошибка проверки баланса: {str(exc)[:120]}")
+
             if comment_texts and (not comment_once or commented < 1):
                 now = time.time()
                 if now < comment_pause_until:
@@ -441,6 +484,27 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                 claimed_after = True
 
             time.sleep(random.uniform(pause_lo, pause_hi) / 1000.0)
+
+    # Compare the actual balance at the end of this run.
+    if api is not None:
+        try:
+            final_balance = api.lightning_balance()
+            if getattr(api, "last_status", None) == 200:
+                if balance_start is not None:
+                    log(
+                        f"[lightning] баланс за запуск: {balance_start} -> "
+                        f"{final_balance} ({final_balance - balance_start:+d}); "
+                        f"сервер подтвердил прочтение {read_done} глав"
+                    )
+                else:
+                    log(f"[lightning] баланс в конце: {final_balance}")
+            else:
+                log(
+                    f"[lightning] итоговый баланс не подтверждён: HTTP "
+                    f"{getattr(api, 'last_status', 'unknown')}"
+                )
+        except Exception as exc:
+            log(f"[lightning] не удалось проверить итоговый баланс: {str(exc)[:120]}")
 
     # Повторная проверка в конце ловит задания, которые стали выполненными
     # уже после промежуточного сбора. Уже забранные задания API отфильтрует.
