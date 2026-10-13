@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 import random
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from . import reader as rdr
 from .log import log as _log
@@ -29,7 +31,12 @@ LIGHTNING_STATE_FILE = os.path.join(
 
 
 def _today() -> str:
-    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 3 * 3600))
+    """Текущая дата по времени Узбекистана (UTC+5), а не UTC/МСК."""
+    try:
+        return datetime.now(ZoneInfo("Asia/Tashkent")).date().isoformat()
+    except Exception:
+        # Резерв для окружений без базы часовых поясов.
+        return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 5 * 3600))
 
 
 def _env_int(name: str, default: int) -> int:
@@ -74,10 +81,19 @@ def save_state(state: dict) -> None:
     import json
 
     state["read"] = state.get("read", [])[-2000:]
+    tmp_path = LIGHTNING_STATE_FILE + ".tmp"
     try:
-        with open(LIGHTNING_STATE_FILE, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, LIGHTNING_STATE_FILE)
     except Exception as exc:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         _log(f"[lightning] не удалось сохранить состояние: {exc}")
 
 
@@ -208,7 +224,17 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
     state = load_state()
     if state["count"] >= max_chapters:
         log(f"[lightning] дневной лимит уже достигнут: {state['count']}")
-        return {"ok": True, "reason": "limit", "count": state["count"]}
+        # Даже при достигнутом лимите чтения могут оставаться забираемые дневные
+        # награды (например, задания за бои, выполненные после прошлого запуска).
+        claimed = len(claim_dailies(api, log=log))
+        return {
+            "ok": True,
+            "reason": "limit",
+            "count": state["count"],
+            "total_today": state["count"],
+            "max_today": max_chapters,
+            "dailies_claimed": claimed,
+        }
 
     if page is None and session is None:
         log("[lightning] нет страницы/сессии")
@@ -380,8 +406,9 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
 
             time.sleep(random.uniform(pause_lo, pause_hi) / 1000.0)
 
-    if not claimed_after:
-        dailies_claimed += len(claim_dailies(api, log=log))
+    # Повторная проверка в конце ловит задания, которые стали выполненными
+    # уже после промежуточного сбора. Уже забранные задания API отфильтрует.
+    dailies_claimed += len(claim_dailies(api, log=log))
 
     if not_found:
         log(f"[lightning] не найдено тайтлов: {not_found} из {len(titles)} "
