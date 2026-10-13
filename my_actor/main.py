@@ -37,6 +37,7 @@ _BOOL_INPUT = {
     "farmLightning": "FARM_LIGHTNING",
     "dungeonUiLoop": "FARM_DUNGEON_UI",
     "useFreeProxy": "USE_FREE_PROXY",
+    "claimRepass": "CLAIM_REPASS",
 }
 _INT_INPUT = {
     "silverMaxRaids": "SILVER_MAX_RAIDS",
