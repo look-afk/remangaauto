@@ -199,8 +199,13 @@ def fast_scroll_to_end(page, chapter_id, cfg: dict, from_top: bool = True) -> di
             page.wait_for_timeout(120)
             st = scroll_state(page, chapter_id)
 
-    return {"at_end": bool(st["inView"]), "mode": "scroll", "steps": steps,
-            "y": st["y"], "end": st["end"], "h": st["h"], "src": st["src"]}
+    # Do not treat the document's total height as proof that the chapter was
+    # completed. ReManga's reader observer watches the chapter-end marker.
+    marker_seen = st.get("src") == "marker"
+    return {"at_end": bool(st["inView"] and marker_seen),
+            "mode": "scroll", "steps": steps,
+            "y": st["y"], "end": st["end"], "h": st["h"],
+            "src": st["src"], "marker_seen": marker_seen}
 
 
 def _read_paged(page, chapter_id, cfg: dict, st: dict) -> dict:
@@ -226,9 +231,13 @@ def _read_paged(page, chapter_id, cfg: dict, st: dict) -> dict:
         if cur["h"] > cur["vh"] * 1.5 + 40:
             break
     st = scroll_state(page, chapter_id)
-    return {"at_end": bool(advanced or st["inView"]), "mode": "pager",
+    # In pager mode, navigation to another URL is not by itself proof that
+    # the chapter was recorded. The server-side viewed flag is verified later.
+    marker_seen = st.get("src") == "marker" and bool(st.get("inView"))
+    return {"at_end": bool(marker_seen), "mode": "pager",
             "steps": clicks, "y": st["y"], "end": st["end"],
-            "h": st["h"], "src": st["src"]}
+            "h": st["h"], "src": st["src"],
+            "marker_seen": marker_seen, "navigated": advanced}
 
 
 def read_chapter(page, url: str, chapter_id, cfg: dict | None = None) -> dict:
@@ -241,6 +250,9 @@ def read_chapter(page, url: str, chapter_id, cfg: dict | None = None) -> dict:
 
     res = fast_scroll_to_end(page, chapter_id, cfg)
     res["ready"] = ready
+    if not ready:
+        res["at_end"] = False
+        res["reason"] = "reader_not_ready"
 
     settle = int(cfg.get("settle_ms", 4200))
     page.wait_for_timeout(settle)
@@ -249,7 +261,9 @@ def read_chapter(page, url: str, chapter_id, cfg: dict | None = None) -> dict:
     st = scroll_state(page, chapter_id)
     if not st["inView"]:
         res2 = fast_scroll_to_end(page, chapter_id, cfg, from_top=False)
-        res.update({k: res2[k] for k in ("at_end", "mode", "steps")})
+        res.update({k: res2[k] for k in (
+            "at_end", "mode", "steps", "src", "marker_seen"
+        ) if k in res2})
         page.wait_for_timeout(settle)
 
     if res.get("mode") == "scroll":
