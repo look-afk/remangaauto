@@ -81,13 +81,13 @@ The Actor prints a structured run log; the final lines summarize the run:
 {"ok": true, "read": 10, "total_today": 10, "errors": 0, "seconds": 143.5}
 ```
 
-Progress for the reader is persisted in `lightning_state.json`, so restarting the Actor never re-reads chapters.
+Progress for the reader is persisted in `lightning_state.json`. The Actor now trusts ReManga's server-side `viewed` flag over the local cache: chapters that were only partially read by an older version are eligible for retry instead of being skipped forever. A chapter is added to local progress only after the end marker and server-side read status are confirmed.
 
 ## Tips or Advanced options
 
 - **Run it hourly.** Energy regenerates over time; short frequent runs convert it into silver at the same rate but keep the cap from overflowing.
 - **Pin a title list** (`readTitleUrls`) instead of the collection page — it saves a browser navigation per run.
-- **Keep `farmSilver` and `farmLightning` together**: reading 10 chapters completes the reading quests, which are worth +55 silver and +100 lightning per day on top of the raids.
+- **Keep `farmSilver` and `farmLightning` together**: reading can progress daily quests, but lightning rewards may be batched and are not guaranteed for every chapter. Check the log lines `баланс до чтения`, `баланс после ... подтверждённых глав`, and `баланс за запуск` to compare actual credits with server-confirmed reading.
 - Set `SILVER_MAX_RAIDS` to a small number if you only want to top up a specific quest.
 - **Silver uses a "ladder"**: it starts from the hardest unlocked dungeon and, on every loss, drops one tier down; the first tier it beats is then farmed non-stop until all energy is gone. Pin one dungeon with `SILVER_LOCATION` to skip the ladder.
 
