@@ -231,10 +231,10 @@ def _read_paged(page, chapter_id, cfg: dict, st: dict) -> dict:
         if cur["h"] > cur["vh"] * 1.5 + 40:
             break
     st = scroll_state(page, chapter_id)
-    # In pager mode, navigation to another URL is not by itself proof that
-    # the chapter was recorded. The server-side viewed flag is verified later.
+    # In pager mode, advancing to another chapter URL is the reader's
+    # end-of-chapter action. farm_lightning still requires server confirmation.
     marker_seen = st.get("src") == "marker" and bool(st.get("inView"))
-    return {"at_end": bool(marker_seen), "mode": "pager",
+    return {"at_end": bool(marker_seen or advanced), "mode": "pager",
             "steps": clicks, "y": st["y"], "end": st["end"],
             "h": st["h"], "src": st["src"],
             "marker_seen": marker_seen, "navigated": advanced}
@@ -274,6 +274,11 @@ def read_chapter(page, url: str, chapter_id, cfg: dict | None = None) -> dict:
             res["progress"] = None
     else:
         res["progress"] = None
+
+    # A missing/failed reader initialization must never be upgraded to success
+    # by a later scroll attempt.
+    if not ready:
+        res["at_end"] = False
     return res
 
 
