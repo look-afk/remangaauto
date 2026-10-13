@@ -336,12 +336,42 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                 try:
                     pg = session.get() if session else page
                     res = rdr.read_chapter(pg, url, cid, read_cfg)
-                    status = rdr.mark_viewed(api, ch, title_id, ch.get("_branch_id"),
-                                             read_cfg, log=log)
+
+                    if not res.get("at_end"):
+                        log(
+                            f"[lightning]   глава {cid}: конец НЕ подтверждён "
+                            f"(source={res.get('src', 'unknown')}, "
+                            f"ready={res.get('ready')}, попытка {attempts}/3); "
+                            "не отмечаю прочитанной"
+                        )
+                        if attempts < 3:
+                            time.sleep(1.5 * attempts)
+                        continue
+
+                    status = rdr.mark_viewed(
+                        api, ch, title_id, ch.get("_branch_id"),
+                        read_cfg, log=log,
+                    )
+                    # Only server-confirmed progress counts. Previously the bot
+                    # set ok=True even for failed/unverified view status, which
+                    # skipped chapters permanently and inflated the local count.
+                    if status not in ("site", "api"):
+                        log(
+                            f"[lightning]   глава {cid}: конец просмотрен, "
+                            f"но сервер не подтвердил «прочитано» "
+                            f"(status={status}, попытка {attempts}/3); "
+                            "оставляю главу для повтора"
+                        )
+                        if attempts < 3:
+                            time.sleep(2 * attempts)
+                        continue
+
                     ok = True
-                    log(f"[lightning]   глава {cid}: скролл "
-                        f"{'конец в кадре' if res.get('at_end') else 'НЕ в кадре'}, "
-                        f"отметка: {status}")
+                    log(
+                        f"[lightning]   глава {cid}: конец подтверждён "
+                        f"(source={res.get('src', 'unknown')}), "
+                        f"серверная отметка: {status}"
+                    )
                 except Exception as exc:
                     if rdr.looks_dead(exc) and session is not None:
                         log(f"[lightning]   браузер вылетел ({exc}) — перезапуск")
@@ -350,9 +380,15 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                         continue
                     log(f"[lightning]   ошибка чтения главы {cid}: {exc}")
                     errors += 1
-                    break
+                    if attempts < 3:
+                        time.sleep(1.5 * attempts)
 
             if not ok:
+                errors += 1
+                log(
+                    f"[lightning]   глава {cid}: не завершена/не подтверждена "
+                    "после 3 попыток; не добавляю в локальный список прочитанного"
+                )
                 continue
 
             state["count"] += 1
