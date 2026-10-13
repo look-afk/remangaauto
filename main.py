@@ -963,6 +963,13 @@ def run_dungeon_bot(proxy_url=None):
 
                     repass_res = claim_repass_rewards(page, log=log)
                     page = session.get()
+                    try:
+                        goto_with_retries(
+                            page, "https://remanga.org/murim-cards#/map",
+                            attempts=2, timeout_ms=45000,
+                        )
+                    except Exception as nav_exc:
+                        log(f"[repass] не удалось вернуться на карту: {str(nav_exc)[:140]}")
                 except Exception as exc:
                     log(f"⚠️ Ошибка проверки Re:Pass: {str(exc)[:160]}")
                     repass_res = {"ok": False, "claimed": 0, "reason": str(exc)[:160]}
