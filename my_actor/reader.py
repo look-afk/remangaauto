@@ -48,18 +48,26 @@ def scroll_cfg_from_env() -> dict:
 # ---------------------------------------------------------------- состояние
 
 def view_is_read(value) -> bool:
+    """Interpret common API values without treating strings like 'unread' as true."""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
         return value > 0
     if isinstance(value, str):
-        return value.lower() not in ("", "false", "none", "null", "0")
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "y", "read", "viewed", "done", "completed"):
+            return True
+        if normalized in ("", "0", "false", "no", "n", "none", "null", "unread",
+                          "not_read", "not read", "not viewed", "unviewed", "pending"):
+            return False
+        # Unknown strings are not reliable proof that the chapter was read.
+        return False
     if isinstance(value, dict):
         for k in ("is_read", "read", "viewed"):
             if k in value:
-                return bool(value[k])
-        return bool(value)
-    return bool(value)
+                return view_is_read(value[k])
+        return False
+    return False
 
 
 def wait_reader_ready(page, timeout_s: int = 20) -> bool:
@@ -256,6 +264,16 @@ def read_chapter(page, url: str, chapter_id, cfg: dict | None = None) -> dict:
 
     settle = int(cfg.get("settle_ms", 4200))
     page.wait_for_timeout(settle)
+
+    # In pager mode, advancing the URL means the reader already left this chapter.
+    # Do not inspect the new chapter page using the old chapter ID: that can
+    # overwrite a valid pager completion with a false negative.
+    if res.get("mode") == "pager" and res.get("navigated"):
+        if not ready:
+            res["at_end"] = False
+            res["reason"] = "reader_not_ready"
+        res["progress"] = None
+        return res
 
     # после паузы контент мог дорасти — доводим маркер обратно в окно
     st = scroll_state(page, chapter_id)
