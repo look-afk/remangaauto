@@ -954,6 +954,19 @@ def run_dungeon_bot(proxy_url=None):
                 except Exception:
                     page.wait_for_timeout(5000)
 
+            # 🎟 Re:Pass: забираем только доступные награды через видимый интерфейс.
+            # Не трогаем покупки/подписку и не используем недокументированные API.
+            repass_res = None
+            if os.getenv("CLAIM_REPASS", "1") == "1":
+                try:
+                    from my_actor.repass_rewards import claim_repass_rewards
+
+                    repass_res = claim_repass_rewards(page, log=log)
+                    page = session.get()
+                except Exception as exc:
+                    log(f"⚠️ Ошибка проверки Re:Pass: {str(exc)[:160]}")
+                    repass_res = {"ok": False, "claimed": 0, "reason": str(exc)[:160]}
+
             # 📨 Отчёт в Telegram: энергия, серебро, молнии, главы, дневки.
             if os.getenv("TG_REPORT", "1") == "1":
                 try:
@@ -963,13 +976,17 @@ def run_dungeon_bot(proxy_url=None):
                 except Exception:
                     li_after = None
                 try:
-                    send_telegram_text(
-                        build_report(
-                            silver_res, li_res,
-                            li_before, li_after, started_ts,
-                            comments=comments_res,
-                        )
+                    report_text = build_report(
+                        silver_res, li_res,
+                        li_before, li_after, started_ts,
+                        comments=comments_res,
                     )
+                    if repass_res is not None:
+                        report_text += (
+                            "\\n🎟 Re:Pass: собрано наград — "
+                            f"{int(repass_res.get('claimed') or 0)}"
+                        )
+                    send_telegram_text(report_text)
                 except Exception as exc:
                     log(f"⚠️ Не удалось отправить TG-отчёт: {exc}")
 
