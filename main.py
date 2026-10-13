@@ -771,49 +771,20 @@ def run_dungeon_bot(proxy_url=None):
                     attempts=2, timeout_ms=45000,
                 )
             except Exception as proxy_navigation_error:
-                # Бесплатный прокси может отвечать на простой HTTP-запрос,
-                # но зависать именно в Chromium. В таком случае один раз
-                # перезапускаем браузер без прокси, сохраняя cookies.
-                if not proxy:
-                    raise
-
-                log(
-                    "[proxy] Браузер не смог открыть ReManga через прокси; "
-                    "перезапускаю Chromium и пробую прямое соединение. "
-                    f"Причина: {str(proxy_navigation_error)[:180]}"
-                )
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-
-                launch_kwargs.pop("proxy", None)
-                browser = p.chromium.launch(**launch_kwargs)
-                context = browser.new_context(
-                    viewport={"width": 1440, "height": 900}
-                )
-                if cookies:
-                    try:
-                        context.add_cookies(cookies)
-                    except Exception as cookie_error:
-                        log(f"⚠️ Не удалось применить cookies после перезапуска: {cookie_error}")
-
-                page = context.new_page()
-                Stealth().apply_stealth_sync(page)
-                session = BrowserSession.from_existing(
-                    p, browser, context, page,
-                    launch_kwargs=launch_kwargs,
-                    context_kwargs={"viewport": {"width": 1440, "height": 900}},
-                    cookies=cookies,
-                )
-                if api is not None:
-                    api.bind_context(context)
-
-                log("[proxy] Повторный переход напрямую, без прокси...")
-                response = goto_with_retries(
-                    page, "https://remanga.org/murim-cards#/map",
-                    attempts=2, timeout_ms=45000,
-                )
+                # Не отключаем прокси после таймаута: прямой IP уже получал 403.
+                # Завершаем запуск с понятной ошибкой, чтобы следующий запуск
+                # заново выбрал кандидата из обновляемого списка.
+                if proxy:
+                    log(
+                        "[proxy] Выбранный прокси не открыл страницу в Chromium. "
+                        "Прямое подключение отключено; повтори запуск, чтобы "
+                        "проверить другой прокси. "
+                        f"Причина: {str(proxy_navigation_error)[:180]}"
+                    )
+                raise RuntimeError(
+                    "Не удалось открыть ReManga через выбранный маршрут. "
+                    "Проверь доступность прокси и повтори запуск."
+                ) from proxy_navigation_error
 
             log(
                 "🌐 HTTP status: "
