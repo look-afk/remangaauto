@@ -30,7 +30,7 @@ def _parse_countries(countries: str | None) -> set[str]:
     return {c.strip().upper() for c in raw.split(",") if c.strip()}
 
 
-def fetch_candidates(countries: str | None = None, limit: int = 300) -> list[str]:
+def fetch_candidates(countries: str | None = None, limit: int = 100) -> list[str]:
     """Download a current list and return candidate proxies."""
     codes = _parse_countries(countries)
     response = requests.get(LIST_URL, timeout=20, headers={"User-Agent": _UA})
@@ -80,7 +80,7 @@ def is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
 _is_alive = is_alive
 
 
-def _browser_alive(proxy_url: str, timeout_ms: int = 16000) -> bool:
+def _browser_alive(proxy_url: str, timeout_ms: int = 12000) -> bool:
     """Validate with Chromium against the exact page the actor needs."""
     parsed = urlparse(proxy_url)
     proxy = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
@@ -130,7 +130,7 @@ def find_working_proxy(countries: str | None = None) -> str | None:
         countries = os.getenv("PROXY_COUNTRIES")
 
     try:
-        candidates = fetch_candidates(countries, limit=300)
+        candidates = fetch_candidates(countries, limit=100)
     except Exception as exc:
         log(f"[proxy] Не удалось скачать список прокси: {exc}")
         return None
@@ -146,7 +146,7 @@ def find_working_proxy(countries: str | None = None) -> str | None:
     )
 
     # A small pool avoids launching dozens of Chromium processes at once.
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {pool.submit(_browser_alive, candidate): candidate
                    for candidate in candidates}
         for future in as_completed(futures):
