@@ -69,7 +69,19 @@ def load_state() -> dict:
             "read": state.get("read", []),
             "comments_count": 0,
             "comments": [],
+            "progress_version": 2,
         }
+    elif int(state.get("progress_version") or 0) < 2:
+        # The previous version counted a chapter even when the end marker or
+        # server-side viewed status failed. Its daily count cannot be trusted.
+        # Reset the counter once; keep IDs so the API can reconcile them below.
+        old_count = state.get("count", 0)
+        state["count"] = 0
+        state["progress_version"] = 2
+        _log(
+            f"[lightning] старый счётчик ({old_count}) был ненадёжным; "
+            "сбрасываю его один раз и сверяю главы с сервером"
+        )
     state.setdefault("count", 0)
     state.setdefault("read", [])
     state.setdefault("comments_count", 0)
