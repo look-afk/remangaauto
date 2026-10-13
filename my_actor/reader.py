@@ -295,7 +295,7 @@ def mark_viewed(api, chapter: dict, title_id, branch_id, cfg: dict | None = None
     def viewed_now():
         items = api.chapters_page(branch_id, page_no)
         for it in items:
-            if it.get("id") == chapter_id and "viewed" in it:
+            if str(it.get("id")) == str(chapter_id) and "viewed" in it:
                 v = it.get("viewed")
                 return None if v is None else view_is_read(v)
         return None
