@@ -124,8 +124,8 @@ def _browser_alive(proxy_url: str, timeout_ms: int = 12000) -> bool:
         return False
 
 
-def find_working_proxy(countries: str | None = None) -> str | None:
-    """Find a proxy that opens ReManga in Chromium, not just in requests."""
+def find_working_proxy(countries: str | None = None, exclude: set[str] | None = None) -> str | None:
+    """Find a proxy that opens ReManga in Chromium, excluding failed routes."""
     if countries is None:
         countries = os.getenv("PROXY_COUNTRIES")
 
@@ -135,8 +135,10 @@ def find_working_proxy(countries: str | None = None) -> str | None:
         log(f"[proxy] Не удалось скачать список прокси: {exc}")
         return None
 
+    excluded = {str(value).strip().rstrip("/") for value in (exclude or set()) if value}
+    candidates = [candidate for candidate in candidates if candidate.rstrip("/") not in excluded]
     if not candidates:
-        log(f"[proxy] В списке нет прокси для стран: {countries or DEFAULT_COUNTRIES}")
+        log(f"[proxy] Нет новых прокси для стран: {countries or DEFAULT_COUNTRIES}")
         return None
 
     log(
