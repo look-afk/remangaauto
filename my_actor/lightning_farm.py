@@ -402,11 +402,24 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                         f"серверная отметка: {status}"
                     )
                 except Exception as exc:
-                    if rdr.looks_dead(exc) and session is not None:
-                        log(f"[lightning]   браузер вылетел ({exc}) — перезапуск")
-                        session.restart()
+                    browser_dead = rdr.looks_dead(exc)
+                    network_flaky = rdr.looks_transient_network(exc)
+
+                    if session is not None and (browser_dead or network_flaky):
+                        reason = "браузер вылетел" if browser_dead else "временный сетевой сбой"
+                        log(
+                            f"[lightning]   {reason} при чтении главы {cid} "
+                            f"(попытка {attempts}/3): {exc} — восстанавливаю браузер"
+                        )
+                        try:
+                            session.restart()
+                        except Exception as restart_exc:
+                            log(f"[lightning]   перезапуск браузера не удался: {restart_exc}")
                         errors += 1
+                        if attempts < 3:
+                            time.sleep(min(2 * attempts, 6))
                         continue
+
                     log(f"[lightning]   ошибка чтения главы {cid}: {exc}")
                     errors += 1
                     if attempts < 3:

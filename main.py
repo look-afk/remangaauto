@@ -776,21 +776,63 @@ def run_dungeon_bot(proxy_url=None):
                     page, "https://remanga.org/murim-cards#/map",
                     attempts=2, timeout_ms=45000,
                 )
-            except Exception as proxy_navigation_error:
-                # Не отключаем прокси после таймаута: прямой IP уже получал 403.
-                # Завершаем запуск с понятной ошибкой, чтобы следующий запуск
-                # заново выбрал кандидата из обновляемого списка.
-                if proxy:
-                    log(
-                        "[proxy] Выбранный прокси не открыл страницу в Chromium. "
-                        "Прямое подключение отключено; повтори запуск, чтобы "
-                        "проверить другой прокси. "
-                        f"Причина: {str(proxy_navigation_error)[:180]}"
-                    )
-                raise RuntimeError(
-                    "Не удалось открыть ReManga через выбранный маршрут. "
-                    "Проверь доступность прокси и повтори запуск."
-                ) from proxy_navigation_error
+            except Exception as navigation_error:
+                # Переключаем маршрут только при сетевом сбое/тайм-ауте.
+                # HTTP 403 — отказ доступа, а не доказательство падения прокси.
+                error_text = str(navigation_error).lower()
+                network_failure = any(token in error_text for token in (
+                    "timeout", "timed out", "net::err_proxy",
+                    "proxy connection", "connection refused",
+                    "connection reset", "name_not_resolved",
+                    "network is unreachable", "socket hang up",
+                ))
+                if not network_failure:
+                    raise
+
+                from my_actor.free_proxies import find_working_proxy
+
+                failed_proxy = proxy_url
+                log("[proxy] Сетевой сбой. Ищу другой рабочий прокси...")
+                replacement_url = find_working_proxy(
+                    exclude={failed_proxy} if failed_proxy else set()
+                )
+                if not replacement_url:
+                    raise RuntimeError(
+                        "Сетевой сбой; новый проверенный прокси не найден. "
+                        "Повтори запуск позже."
+                    ) from navigation_error
+
+                log("[proxy] Найден другой проверенный маршрут; перезапускаю браузер.")
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+                proxy_url = replacement_url
+                proxy = parse_proxy(proxy_url)
+                launch_kwargs["proxy"] = proxy
+                browser = p.chromium.launch(**launch_kwargs)
+                context = browser.new_context(
+                    viewport={"width": 1440, "height": 900}
+                )
+                if cookies:
+                    context.add_cookies(cookies)
+                page = context.new_page()
+                Stealth().apply_stealth_sync(page)
+
+                session = BrowserSession.from_existing(
+                    p, browser, context, page,
+                    launch_kwargs=launch_kwargs,
+                    context_kwargs={"viewport": {"width": 1440, "height": 900}},
+                    cookies=cookies,
+                )
+                if api is not None:
+                    api.bind_context(context)
+
+                response = goto_with_retries(
+                    page, "https://remanga.org/murim-cards#/map",
+                    attempts=2, timeout_ms=45000,
+                )
 
             log(
                 "🌐 HTTP status: "
