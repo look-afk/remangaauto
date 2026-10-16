@@ -343,6 +343,19 @@ def looks_dead(exc: Exception) -> bool:
     ))
 
 
+def looks_transient_network(exc: Exception) -> bool:
+    """Detect temporary navigation/network failures, not HTTP access denials."""
+    text = str(exc).lower()
+    return any(s in text for s in (
+        "timeout", "timed out", "net::err_proxy",
+        "err_tunnel_connection_failed", "err_connection_refused",
+        "err_connection_reset", "err_connection_closed",
+        "err_name_not_resolved", "err_network_changed",
+        "err_internet_disconnected", "network is unreachable",
+        "socket hang up", "proxy connection",
+    ))
+
+
 class BrowserSession:
     """Владелец браузера: умеет перезапускаться, если Chromium вылетел."""
 
