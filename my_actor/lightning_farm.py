@@ -106,7 +106,7 @@ def save_state(state: dict) -> None:
                 os.remove(tmp_path)
         except OSError:
             pass
-        _log(f"[lightning] не удалось сохранить состояние: {exc}")
+        _log(f"[lightning] не удалось сохранить состояние ({type(exc).__name__}; детали скрыты)")
 
 
 def slug_from_url(value: str) -> str:
@@ -265,7 +265,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
             titles = collect_collection_titles(session.get() if session else page,
                                                env_collection)
         except Exception as exc:
-            log(f"[lightning] сбор коллекции не удался: {exc}")
+            log(f"[lightning] сбор коллекции не удался ({type(exc).__name__}; детали скрыты)")
             titles = []
     if not titles:
         log("[lightning] тайтлы не найдены")
@@ -335,7 +335,7 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
         try:
             info, todo = chapters_to_read(api, slug, read_set, skip_paid)
         except Exception as exc:
-            log(f"[lightning] не удалось получить главы {slug}: {exc}")
+            log(f"[lightning] не удалось получить главы {slug} ({type(exc).__name__}; детали скрыты)")
             errors += 1
             continue
         if not info:
@@ -403,11 +403,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                     )
                 except Exception as exc:
                     if rdr.looks_dead(exc) and session is not None:
-                        log(f"[lightning]   браузер вылетел ({exc}) — перезапуск")
+                        log(f"[lightning]   браузер вылетел ({type(exc).__name__}; детали скрыты) — перезапуск")
                         session.restart()
                         errors += 1
                         continue
-                    log(f"[lightning]   ошибка чтения главы {cid}: {exc}")
+                    log(f"[lightning]   ошибка чтения главы {cid} ({type(exc).__name__}; детали скрыты)")
                     errors += 1
                     if attempts < 3:
                         time.sleep(1.5 * attempts)
@@ -485,11 +485,11 @@ def farm_lightning(page=None, session=None, api=None, log=_log) -> dict:
                                 log(f"[lightning]   ⏸ пауза комментариев на {comment_pause // 60} мин "
                                     f"после {comment_burst} комментариев; чтение глав продолжается без ожидания")
                         else:
-                            log(f"[lightning]   💬 комментарий к главе {cid} "
+                            log(f"[lightning]   комментарий к главе {cid} "
                                 f"не отправлен: {detail}")
                     except Exception as exc:
                         log(f"[lightning]   💬 комментарий к главе {cid} "
-                            f"не удался: {exc}")
+                            f"не удался ({type(exc).__name__}; детали скрыты)")
 
             if not claimed_after and state["count"] >= 10:
                 dailies_claimed += len(claim_dailies(api, log=log))
