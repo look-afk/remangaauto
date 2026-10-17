@@ -286,7 +286,7 @@ class RemangaApi:
                     json=body, params=params or None, timeout=30,
                 )
             except requests.RequestException as exc:
-                last = (0, {"_error": str(exc)})
+                last = (0, {"_error": f"{type(exc).__name__} (details redacted)"})
                 time.sleep(1.0 + attempt + random.random())
                 continue
 
@@ -316,7 +316,7 @@ class RemangaApi:
                 except Exception as exc:
                     self._warn_once(
                         ("ctx-error",),
-                        f"[api] повтор через браузерный контекст не удался: {exc}",
+                        f"[api] повтор через браузерный контекст не удался: {type(exc).__name__} (details redacted)",
                     )
             else:
                 detail = ""
