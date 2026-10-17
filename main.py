@@ -397,8 +397,7 @@ def build_report(silver=None, lightning=None, li_before=None, li_after=None,
     else:
         lines.append("📖 глав сегодня: —")
 
-    if int(lightning.get("comments") or 0) > 0:
-        lines.append(f"💬 комментариев: {lightning['comments']}")
+    if int(lightning.get("comments") or 0) > 0:        lines.append(f"💬 комментариев: {lightning['comments']}")
 
     if comments:
         sent = sum(1 for c in comments if c.get("ok"))
@@ -777,28 +776,74 @@ def run_dungeon_bot(proxy_url=None):
                     attempts=2, timeout_ms=45000,
                 )
             except Exception as proxy_navigation_error:
-                # Не отключаем прокси после таймаута: прямой IP уже получал 403.
-                # Завершаем запуск с понятной ошибкой, чтобы следующий запуск
-                # заново выбрал кандидата из обновляемого списка.
-                if proxy:
-                    log(
-                        "[proxy] Выбранный прокси не открыл страницу в Chromium. "
-                        "Прямое подключение отключено; повтори запуск, чтобы "
-                        "проверить другой прокси. "
-                        f"Причина: {str(proxy_navigation_error)[:180]}"
-                    )
-                raise RuntimeError(
-                    "Не удалось открыть ReManga через выбранный маршрут. "
-                    "Проверь доступность прокси и повтори запуск."
-                ) from proxy_navigation_error
+                # Меняем маршрут только после сетевого исключения/таймаута.
+                # HTTP-ответы 401/403/429 не считаются отказом прокси и
+                # не запускают ротацию.
+                if not proxy:
+                    raise RuntimeError(
+                        "Не удалось открыть страницу из-за сетевой ошибки. "
+                        "Проверь соединение и повтори запуск."
+                    ) from proxy_navigation_error
+
+                log(
+                    "[proxy] Сетевая ошибка при открытии страницы; "
+                    "ищу замену для недоступного прокси..."
+                )
+                from my_actor.free_proxies import find_working_proxy
+
+                replacement_url = find_working_proxy()
+                if not replacement_url or replacement_url == proxy_url:
+                    raise RuntimeError(
+                        "Не удалось найти другой рабочий прокси после "
+                        "сетевой ошибки. Повтори запуск позже."
+                    ) from proxy_navigation_error
+
+                log("[proxy] Найден запасной прокси; пересоздаю браузер.")
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+                proxy_url = replacement_url
+                proxy = parse_proxy(proxy_url)
+                os.environ["PROXY_URL"] = proxy_url
+                launch_kwargs = {
+                    "headless": True,
+                    "args": browser_args,
+                    "proxy": proxy,
+                }
+                browser = p.chromium.launch(**launch_kwargs)
+                context = browser.new_context(
+                    viewport={"width": 1440, "height": 900}
+                )
+                if cookies:
+                    context.add_cookies(cookies)
+                page = context.new_page()
+                Stealth().apply_stealth_sync(page)
+                session = BrowserSession.from_existing(
+                    p, browser, context, page,
+                    launch_kwargs=launch_kwargs,
+                    context_kwargs={"viewport": {"width": 1440, "height": 900}},
+                    cookies=cookies,
+                )
+                if api is not None:
+                    api.bind_context(context)
+
+                response = goto_with_retries(
+                    page, "https://remanga.org/murim-cards#/map",
+                    attempts=2, timeout_ms=45000,
+                )
 
             log(
                 "🌐 HTTP status: "
                 f"{response.status if response else 'unknown'}"
             )
 
-            if response and response.status in (401, 403, 429):
-                route = (
+            if response and response.status in (401, 403, 429):                route = (
                     f"через прокси {proxy_url}" if proxy_url
                     else "напрямую (IP без прокси)"
                 )
