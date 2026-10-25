@@ -1,7 +1,8 @@
 """Free proxy discovery and validation for ReManga.
 
 A proxy is not considered usable merely because requests can reach the
-homepage: Chromium must also be able to open the actual Murim Cards page.
+homepage: Chromium must also be able to open the actual Murim Cards page
+AND reach the API host (api.remanga.org), because all farming goes there.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ LIST_URL = (
 )
 DEFAULT_COUNTRIES = "RU,KZ,BY,UZ,AM,GE,AZ,MD,UA,TJ,KG"
 CHECK_URL = "https://remanga.org/murim-cards#/map"
+API_CHECK_URL = "https://api.remanga.org/api/users/current/"
 _ALLOWED_SCHEMES = {"http", "socks4", "socks5"}
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -30,9 +32,14 @@ def _parse_countries(countries: str | None) -> set[str]:
     return {c.strip().upper() for c in raw.split(",") if c.strip()}
 
 
-def fetch_candidates(countries: str | None = None, limit: int = 100) -> list[str]:
-    """Download a current list and return candidate proxies."""
+def fetch_candidates(countries: str | None = None, limit: int = 100,
+                     exclude: set[str] | None = None) -> list[str]:
+    """Download a current list and return candidate proxies.
+
+    exclude - proxies that already failed in this run (skipped).
+    """
     codes = _parse_countries(countries)
+    skip = set(exclude or ())
     response = requests.get(LIST_URL, timeout=20, headers={"User-Agent": _UA})
     response.raise_for_status()
     data = response.json()
@@ -49,7 +56,9 @@ def fetch_candidates(countries: str | None = None, limit: int = 100) -> list[str
             continue
         ip, port = item.get("ip"), item.get("port")
         if ip and port:
-            found.append(f"{scheme}://{ip}:{port}")
+            url = f"{scheme}://{ip}:{port}"
+            if url not in skip:
+                found.append(url)
 
     random.shuffle(found)
     return found[:limit]
@@ -81,7 +90,8 @@ _is_alive = is_alive
 
 
 def _browser_alive(proxy_url: str, timeout_ms: int = 12000) -> bool:
-    """Validate with Chromium against the exact page the actor needs."""
+    """Validate with Chromium against the exact page the actor needs,
+    plus reachability of the API host through the same proxy."""
     parsed = urlparse(proxy_url)
     proxy = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
     if parsed.username:
@@ -112,25 +122,47 @@ def _browser_alive(proxy_url: str, timeout_ms: int = 12000) -> bool:
                 title = (page.title() or "").lower()
                 body = (page.locator("body").inner_text(timeout=3000) or "").lower()
                 content = f"{title}\n{body}"
-                return (
-                    "ddos-guard" not in content
-                    and "ddos guard" not in content
-                    and "checking your browser" not in content
-                    and len(body.strip()) > 20
+                if (
+                    "ddos-guard" in content
+                    or "ddos guard" in content
+                    or "checking your browser" in content
+                    or len(body.strip()) <= 20
+                ):
+                    return False
+
+                # Farming goes to api.remanga.org (a separate host); many free
+                # proxies open the site but cannot reach the API. Any HTTP
+                # answer (even 401) is fine; a connection error is not.
+                api_resp = page.context.request.get(
+                    API_CHECK_URL,
+                    timeout=timeout_ms,
+                    fail_on_status_code=False,
                 )
+                api_body = (api_resp.text() or "")[:3000].lower()
+                if (
+                    api_resp.status >= 500
+                    or "ddos-guard" in api_body
+                    or "ddos guard" in api_body
+                ):
+                    return False
+                return True
             finally:
                 browser.close()
     except Exception:
         return False
 
 
-def find_working_proxy(countries: str | None = None) -> str | None:
-    """Find a proxy that opens ReManga in Chromium, not just in requests."""
+def find_working_proxy(countries: str | None = None,
+                       exclude: set[str] | None = None) -> str | None:
+    """Find a proxy that opens ReManga (site + API) in Chromium.
+
+    exclude - proxies that already failed in this run.
+    """
     if countries is None:
         countries = os.getenv("PROXY_COUNTRIES")
 
     try:
-        candidates = fetch_candidates(countries, limit=100)
+        candidates = fetch_candidates(countries, limit=100, exclude=exclude)
     except Exception as exc:
         log(f"[proxy] Не удалось скачать список прокси: {exc}")
         return None
@@ -142,7 +174,7 @@ def find_working_proxy(countries: str | None = None) -> str | None:
     log(
         f"[proxy] Найдено {len(candidates)} кандидатов "
         f"(страны: {countries or DEFAULT_COUNTRIES}); "
-        "проверяю ReManga через Chromium..."
+        "проверяю ReManga и API через Chromium..."
     )
 
     # A small pool avoids launching dozens of Chromium processes at once.
@@ -156,7 +188,7 @@ def find_working_proxy(countries: str | None = None) -> str | None:
             except Exception:
                 alive = False
             if alive:
-                log(f"[proxy] ✅ Chromium открыл ReManga через {candidate}")
+                log(f"[proxy] ✅ Chromium открыл ReManga и API через {candidate}")
                 for pending in futures:
                     pending.cancel()
                 return candidate
