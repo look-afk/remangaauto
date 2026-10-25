@@ -765,6 +765,85 @@ def run_dungeon_bot(proxy_url=None):
         if api is not None:
             api.bind_context(context)
 
+        # ---- failover прокси (добавлено патчем) ----
+        MAP_URL = "https://remanga.org/murim-cards#/map"
+        failed_proxies = set()
+
+        def _apply_api_proxy(url):
+            """Переключает requests-сессию API на тот же прокси, что у браузера."""
+            if api is None or not url:
+                return
+            full = url if "://" in url else "http://" + url
+            api.proxy = {"http": full, "https": full}
+            api.s.proxies.clear()
+            api.s.proxies.update(api.proxy)
+
+        def _hook_session(s):
+            """После любого перезапуска браузера заново привязываем контекст к API."""
+            orig = s.restart
+
+            def restart_and_rebind():
+                pg = orig()
+                if api is not None:
+                    api.bind_context(s.context)
+                return pg
+
+            s.restart = restart_and_rebind
+
+        def ensure_network(stage=""):
+            """Если API недоступен через прокси — берём новый и перезапускаем браузер."""
+            nonlocal browser, context, page, proxy, proxy_url, launch_kwargs
+            if api is None or not proxy_url:
+                return True
+            try:
+                code, _ = api.get("/api/users/current/")
+            except Exception:
+                code = 0
+            if code != 0:
+                return True
+            if os.getenv("USE_FREE_PROXY", "1") != "1":
+                log(f"[proxy] {stage}: API недоступен, ротация выключена (USE_FREE_PROXY=0).")
+                return False
+
+            from my_actor.free_proxies import find_working_proxy
+
+            max_rot = int(os.getenv("PROXY_MAX_ROTATIONS", "3") or 3)
+            for n in range(1, max_rot + 1):
+                failed_proxies.add(proxy_url)
+                log(f"[proxy] {stage}: API недоступен, ротация {n}/{max_rot}...")
+                new_url = find_working_proxy(exclude=failed_proxies)
+                if not new_url:
+                    log("[proxy] запасной прокси не найден.")
+                    return False
+                proxy_url = new_url
+                proxy = parse_proxy(new_url)
+                os.environ["PROXY_URL"] = new_url
+                launch_kwargs = {**launch_kwargs, "proxy": proxy}
+                session.launch_kwargs = launch_kwargs
+                try:
+                    session.restart()
+                except Exception as exc:
+                    log(f"[proxy] не удалось перезапустить браузер: {exc}")
+                    continue
+                browser, context, page = session.browser, session.context, session._page
+                _apply_api_proxy(new_url)
+                try:
+                    goto_with_retries(page, MAP_URL, attempts=2, timeout_ms=45000)
+                except Exception as exc:
+                    log(f"[proxy] карта не открылась: {str(exc)[:120]}")
+                try:
+                    code, _ = api.get("/api/users/current/")
+                except Exception:
+                    code = 0
+                if code != 0:
+                    log("[proxy] ✅ API снова доступен.")
+                    return True
+            return False
+
+        _apply_api_proxy(proxy_url)
+        _hook_session(session)
+        # ---- конец failover ----
+
         try:
             log(
                 "🔗 Переход на "
@@ -788,7 +867,7 @@ def run_dungeon_bot(proxy_url=None):
                 log("[proxy] Сетевая ошибка; ищу один запасной прокси...")
                 from my_actor.free_proxies import find_working_proxy
 
-                replacement_url = find_working_proxy()
+                replacement_url = find_working_proxy(exclude={proxy_url})
                 if not replacement_url or replacement_url == proxy_url:
                     raise RuntimeError(
                         "Не удалось найти другой рабочий прокси после сетевой ошибки."
@@ -827,6 +906,8 @@ def run_dungeon_bot(proxy_url=None):
                 )
                 if api is not None:
                     api.bind_context(context)
+                _hook_session(session)
+                _apply_api_proxy(proxy_url)
 
                 response = goto_with_retries(
                     page, "https://remanga.org/murim-cards#/map",
@@ -881,6 +962,8 @@ def run_dungeon_bot(proxy_url=None):
                     "⚠️ Не удалось подтвердить "
                     "авторизацию по cookies."
                 )
+
+            ensure_network("старт")
 
             # 💬 Комментарии отдельно от чтения глав:
             # POST_COMMENTS = "id:текст|id2:текст2", пауза POST_COMMENTS_PAUSE_S.
@@ -952,6 +1035,7 @@ def run_dungeon_bot(proxy_url=None):
 
             # 🪙 Серебро: тратим энергию на локации через API и забираем
             # ежедневные задания. Работает без браузера — секунды вместо минут.
+            ensure_network("серебро")
             silver_res = None
             li_res = None
             try:
@@ -972,6 +1056,7 @@ def run_dungeon_bot(proxy_url=None):
 
             # ⚡ Молнии: используем отдельный актуальный фармер,
             # не меняя рабочую инициализацию браузера/прокси.
+            ensure_network("молнии")
             if os.getenv("FARM_LIGHTNING", "1") == "1":
                 try:
                     from my_actor.lightning_farm import farm_lightning
@@ -997,6 +1082,7 @@ def run_dungeon_bot(proxy_url=None):
 
             # 🎟 Re:Pass: забираем только доступные награды через видимый интерфейс.
             # Не трогаем покупки/подписку и не используем недокументированные API.
+            ensure_network("repass")
             repass_res = None
             if os.getenv("CLAIM_REPASS", "1") == "1":
                 try:
