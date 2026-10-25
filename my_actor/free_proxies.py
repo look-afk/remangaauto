@@ -32,36 +32,163 @@ def _parse_countries(countries: str | None) -> set[str]:
     return {c.strip().upper() for c in raw.split(",") if c.strip()}
 
 
-def fetch_candidates(countries: str | None = None, limit: int = 100,
-                     exclude: set[str] | None = None) -> list[str]:
-    """Download a current list and return candidate proxies.
+PROXYSCRAPE_URL = (
+    "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/"
+    "proxies/countries/{cc}/{proto}/data.txt"
+)
+GPROXY_URL = (
+    "https://raw.githubusercontent.com/gproxynet/free-proxy-list/"
+    "main/proxies.json"
+)
+DEFAULT_SOURCES = "proxifly,proxyscrape,gproxynet"
+FAST_MS = 5000  # быстрее этого считаем прокси «быстрым» и проверяем первым
 
-    exclude - proxies that already failed in this run (skipped).
-    """
-    codes = _parse_countries(countries)
-    skip = set(exclude or ())
+
+def _norm_scheme(value) -> str | None:
+    scheme = str(value or "http").strip().lower()
+    if scheme == "https":
+        scheme = "http"
+    return scheme if scheme in _ALLOWED_SCHEMES else None
+
+
+def _make_url(scheme, hostport) -> str | None:
+    """Собирает scheme://host:port из разных форматов списков."""
+    text = str(hostport or "").strip()
+    if not text:
+        return None
+    text = text.split()[0]
+    if "://" in text:
+        scheme, text = text.split("://", 1)
+    scheme = _norm_scheme(scheme)
+    text = text.rstrip("/")
+    host, _, port = text.rpartition(":")
+    if not scheme or not host or not port.isdigit():
+        return None
+    return f"{scheme}://{host}:{port}"
+
+
+def _src_proxifly(codes: set[str]) -> list[tuple[str, int | None]]:
     response = requests.get(LIST_URL, timeout=20, headers={"User-Agent": _UA})
     response.raise_for_status()
     data = response.json()
-
-    found: list[str] = []
+    out: list[tuple[str, int | None]] = []
     for item in data if isinstance(data, list) else []:
         geo = item.get("geolocation") or {}
         if geo.get("country") not in codes:
             continue
-        scheme = str(item.get("protocol") or "http").lower()
-        if scheme == "https":
-            scheme = "http"
-        if scheme not in _ALLOWED_SCHEMES:
-            continue
-        ip, port = item.get("ip"), item.get("port")
-        if ip and port:
-            url = f"{scheme}://{ip}:{port}"
-            if url not in skip:
-                found.append(url)
+        url = _make_url(item.get("protocol"), f"{item.get('ip')}:{item.get('port')}")
+        if url:
+            out.append((url, None))
+    return out
 
-    random.shuffle(found)
-    return found[:limit]
+
+def _src_proxyscrape(codes: set[str]) -> list[tuple[str, int | None]]:
+    jobs = [(cc.lower(), proto) for cc in sorted(codes) for proto in ("http", "socks5")]
+
+    def load(job):
+        cc, proto = job
+        try:
+            r = requests.get(
+                PROXYSCRAPE_URL.format(cc=cc, proto=proto),
+                timeout=10, headers={"User-Agent": _UA},
+            )
+            if r.status_code != 200:
+                return []
+            return [u for u in (_make_url(proto, ln) for ln in r.text.splitlines()) if u]
+        except Exception:
+            return []
+
+    out: list[tuple[str, int | None]] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for urls in pool.map(load, jobs):
+            out.extend((u, None) for u in urls)
+    return out
+
+
+def _src_gproxynet(codes: set[str]) -> list[tuple[str, int | None]]:
+    response = requests.get(GPROXY_URL, timeout=20, headers={"User-Agent": _UA})
+    response.raise_for_status()
+    data = response.json()
+    items = data if isinstance(data, list) else (data.get("proxies") or [])
+    out: list[tuple[str, int | None]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("country") or "").upper() not in codes:
+            continue
+        url = _make_url(item.get("protocol"), item.get("proxy"))
+        if not url:
+            continue
+        lat = item.get("latency_ms")
+        out.append((url, int(lat) if isinstance(lat, (int, float)) else None))
+    return out
+
+
+_SOURCES = {
+    "proxifly": _src_proxifly,
+    "proxyscrape": _src_proxyscrape,
+    "gproxynet": _src_gproxynet,
+}
+
+
+def fetch_candidates(countries: str | None = None, limit: int = 100,
+                     exclude: set[str] | None = None) -> list[str]:
+    """Собирает кандидатов из нескольких публичных списков.
+
+    Источники: env PROXY_SOURCES (по умолчанию proxifly,proxyscrape,gproxynet).
+    Из каждого берём быстрые первыми (если известна задержка), остальные
+    перемешиваем; затем чередуем источники, чтобы не зависеть от одного.
+    exclude - прокси, которые уже отвалились в этом прогоне.
+    """
+    codes = _parse_countries(countries)
+    skip = set(exclude or ())
+    names = [n.strip().lower()
+             for n in (os.getenv("PROXY_SOURCES") or DEFAULT_SOURCES).split(",")
+             if n.strip()]
+
+    per_source: list[list[str]] = []
+    for name in names:
+        fn = _SOURCES.get(name)
+        if fn is None:
+            log(f"[proxy] неизвестный источник «{name}» — пропускаю")
+            continue
+        try:
+            items = fn(codes)
+        except Exception as exc:
+            log(f"[proxy] источник {name} недоступен: {str(exc)[:100]}")
+            continue
+
+        seen: set[str] = set()
+        fast: list[tuple[str, int]] = []
+        rest: list[str] = []
+        for url, lat in items:
+            if url in skip or url in seen:
+                continue
+            seen.add(url)
+            if lat is not None and lat <= FAST_MS:
+                fast.append((url, lat))
+            else:
+                rest.append(url)
+        fast.sort(key=lambda x: x[1])
+        random.shuffle(rest)
+        ordered = [u for u, _ in fast] + rest
+        log(f"[proxy] источник {name}: {len(ordered)} кандидатов")
+        if ordered:
+            per_source.append(ordered)
+
+    # round-robin по источникам, без дублей
+    result: list[str] = []
+    seen_all: set[str] = set()
+    idx = 0
+    while len(result) < limit and any(idx < len(lst) for lst in per_source):
+        for lst in per_source:
+            if idx < len(lst) and lst[idx] not in seen_all:
+                seen_all.add(lst[idx])
+                result.append(lst[idx])
+                if len(result) >= limit:
+                    break
+        idx += 1
+    return result
 
 
 def is_alive(proxy_url: str, timeout: float = 10.0) -> bool:
@@ -162,7 +289,7 @@ def find_working_proxy(countries: str | None = None,
         countries = os.getenv("PROXY_COUNTRIES")
 
     try:
-        candidates = fetch_candidates(countries, limit=100, exclude=exclude)
+        candidates = fetch_candidates(countries, limit=120, exclude=exclude)
     except Exception as exc:
         log(f"[proxy] Не удалось скачать список прокси: {exc}")
         return None
